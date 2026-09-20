@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [{ "command": "BUDDY_FORWARD" }],
+    "sessionEnd": [{ "command": "BUDDY_FORWARD" }],
+    "beforeSubmitPrompt": [{ "command": "BUDDY_FORWARD" }],
+    "preToolUse": [{ "command": "BUDDY_FORWARD" }],
+    "postToolUseFailure": [{ "command": "BUDDY_FORWARD" }],
+    "stop": [{ "command": "BUDDY_FORWARD" }],
+    "afterAgentResponse": [{ "command": "BUDDY_FORWARD" }],
+    "afterAgentThought": [{ "command": "BUDDY_FORWARD" }],
+    "subagentStart": [{ "command": "BUDDY_FORWARD" }],
+    "subagentStop": [{ "command": "BUDDY_FORWARD" }]
+  }
+}
