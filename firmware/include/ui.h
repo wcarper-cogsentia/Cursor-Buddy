@@ -3,7 +3,11 @@
 #include "buddy_protocol.h"
 #include <vector>
 
-void uiBegin();
+// setupMode leaves the panel blank for uiShowSetup.
+void uiBegin(bool setupMode);
+void uiShowSetup(const char *apName, const char *url);
+// True once when the clock's SETUP control is tapped, or Mute and Dismiss are held together.
+bool uiPollSetup();
 // Release UART0 (GPIO43/44) and arm the four header switches. Call after boot logs.
 void uiArmSwitches();
 void uiLoop();

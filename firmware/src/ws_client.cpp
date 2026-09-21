@@ -1,13 +1,20 @@
+#include <Arduino.h>
+#include <ESPmDNS.h>
 #include <WiFi.h>
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
 #include "ws_client.h"
-#include "config.h"
+#include "settings.h"
 
 static WebSocketsClient webSocket;
 static SnapshotHandler g_onSnapshot = nullptr;
 static ConnHandler g_onConn = nullptr;
 static bool g_connected = false;
+static bool g_mdns = false;
+static String g_host;
+static uint16_t g_port = 8787;
+static String g_path = "/ws";
+static uint32_t g_down_since = 0;
 
 static void handlePayload(uint8_t *payload, size_t length) {
   JsonDocument doc;
@@ -40,6 +47,7 @@ static void onWsEvent(WStype_t type, uint8_t *payload, size_t length) {
       break;
     case WStype_CONNECTED:
       g_connected = true;
+      g_down_since = 0;
       if (g_onConn) g_onConn(true);
       break;
     case WStype_TEXT:
@@ -50,26 +58,69 @@ static void onWsEvent(WStype_t type, uint8_t *payload, size_t length) {
   }
 }
 
-void buddyWsBegin(SnapshotHandler onSnapshot, ConnHandler onConn) {
-  g_onSnapshot = onSnapshot;
-  g_onConn = onConn;
-  webSocket.begin(BUDDY_HOST, BUDDY_WS_PORT, BUDDY_WS_PATH);
-  webSocket.onEvent(onWsEvent);
-  webSocket.setReconnectInterval(3000);
+static bool isLocalName(const String &host) {
+  if (host.length() < 7) return false;
+  String tail = host.substring(host.length() - 6);
+  tail.toLowerCase();
+  return tail == ".local";
 }
 
-void buddyWsLoop() { webSocket.loop(); }
+static bool ensureMdns() {
+  if (g_mdns) return true;
+  char name[16];
+  settingsRadioName(name, sizeof(name), true);
+  g_mdns = MDNS.begin(name);
+  return g_mdns;
+}
+
+static void connectSocket() {
+  if (!g_host.length()) return;
+  String host = g_host;
+  if (isLocalName(host) && WiFi.status() == WL_CONNECTED && ensureMdns()) {
+    String name = host.substring(0, host.length() - 6);
+    IPAddress ip = MDNS.queryHost(name.c_str(), 2000);
+    if (ip) {
+      Serial.printf("[ws] %s is %s\n", g_host.c_str(), ip.toString().c_str());
+      host = ip.toString();
+    } else {
+      Serial.printf("[ws] no answer for %s\n", g_host.c_str());
+    }
+  }
+  webSocket.disconnect();
+  webSocket.begin(host.c_str(), g_port, g_path.c_str());
+  webSocket.onEvent(onWsEvent);
+  webSocket.setReconnectInterval(3000);
+  g_down_since = millis();
+}
+
+void buddyWsBegin(const String &host, uint16_t port, const String &path, SnapshotHandler onSnapshot, ConnHandler onConn) {
+  g_host = host;
+  g_port = port ? port : 8787;
+  g_path = path.length() ? path : "/ws";
+  g_onSnapshot = onSnapshot;
+  g_onConn = onConn;
+  connectSocket();
+}
+
+void buddyWsLoop() {
+  webSocket.loop();
+  if (!isLocalName(g_host)) return;
+  if (g_connected) {
+    g_down_since = 0;
+    return;
+  }
+  if (!g_down_since) g_down_since = millis();
+  if ((int32_t)(millis() - g_down_since) < 20000) return;
+  connectSocket();
+}
 
 void buddyWsSuspend() {
   webSocket.disconnect();
   g_connected = false;
+  g_down_since = 0;
 }
 
-void buddyWsResume() {
-  webSocket.begin(BUDDY_HOST, BUDDY_WS_PORT, BUDDY_WS_PATH);
-  webSocket.onEvent(onWsEvent);
-  webSocket.setReconnectInterval(3000);
-}
+void buddyWsResume() { connectSocket(); }
 
 bool buddyWsConnected() { return g_connected; }
 

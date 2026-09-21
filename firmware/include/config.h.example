@@ -1,10 +1,21 @@
 #pragma once
 
-// Copy to config.h and fill in your LAN details.
+// Optional first-boot values. On a puck with empty storage, these are copied
+// into the device once and then left alone. Later changes happen on the
+// puck's setup page, not by editing this file and reflashing.
+//
+// Leave YOUR_SSID in place to skip that copy and use the setup page for the
+// first boot. The puck then starts an open Wi-Fi network named Buddy-XXXX.
+// Join it and open http://192.168.4.1. The screen shows the exact name.
+//
+// Open setup again with SETUP on the clock, or by holding Mute and Dismiss
+// together for two seconds. Holding those two while the puck turns on does
+// the same thing.
+
 #define BUDDY_WIFI_SSID     "YOUR_SSID"
 #define BUDDY_WIFI_PASSWORD "YOUR_PASSWORD"
 
-// Computer running the Buddy service (LAN IP), e.g. 192.168.1.42
+// Computer running the Buddy service. An IP address or a hostname.
 #define BUDDY_HOST          "192.168.1.42"
 #define BUDDY_WS_PORT       8787
 #define BUDDY_WS_PATH       "/ws"
@@ -12,8 +23,7 @@
 // Optional device name shown on the agent screen
 #define BUDDY_DEVICE_NAME   "CURSOR BUDDY"
 
-// Idle face (no active Cursor sessions): local time and weather.
-// The puck needs outbound internet for NTP and the forecast.
+// Copied on that same first boot when the lines below are uncommented.
 // POSIX timezone. Leave unset to use the offset from the location lookup.
 // US Mountain Time:
 // #define BUDDY_TZ "MST7MDT,M3.2.0,M11.1.0"

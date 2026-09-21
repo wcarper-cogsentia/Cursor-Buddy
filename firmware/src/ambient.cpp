@@ -1,5 +1,5 @@
 #include "ambient.h"
-#include "config.h"
+#include "settings.h"
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -44,23 +44,18 @@ static char g_summary[24] = "";
 static bool due(uint32_t at) { return (int32_t)(millis() - at) >= 0; }
 
 static bool useFahrenheit() {
-#if defined(BUDDY_TEMP_C) && BUDDY_TEMP_C
-  return false;
-#else
+  BuddyTempUnit unit = settings().tempUnit;
+  if (unit == BuddyTempUnit::Celsius) return false;
+  if (unit == BuddyTempUnit::Fahrenheit) return true;
   return g_cc[0] == '\0' || strcmp(g_cc, "US") == 0;
-#endif
 }
 
 static bool fixedLocation(float &lat, float &lon) {
-#if defined(BUDDY_LATITUDE) && defined(BUDDY_LONGITUDE)
-  lat = (float)BUDDY_LATITUDE;
-  lon = (float)BUDDY_LONGITUDE;
+  const BuddySettings &saved = settings();
+  if (!saved.hasLocation) return false;
+  lat = saved.latitude;
+  lon = saved.longitude;
   return true;
-#else
-  (void)lat;
-  (void)lon;
-  return false;
-#endif
 }
 
 static bool coords(float &lat, float &lon) {
@@ -127,25 +122,21 @@ static void publishWeather(bool ok, int temp, char unit, int code, const char *s
 }
 
 static void applyOffset(int offsetSec) {
-#ifdef BUDDY_TZ
-  (void)offsetSec;
-#else
+  if (settings().tz.length()) return;
   if (g_offset_set && g_offset == offsetSec) return;
   configTime(offsetSec, 0, "pool.ntp.org", "time.nist.gov");
   g_offset = offsetSec;
   g_offset_set = true;
   g_clock_started = true;
   Serial.printf("[ambient] utc offset %d\n", offsetSec);
-#endif
 }
 
 static void ensureClock() {
-#ifdef BUDDY_TZ
-  if (g_clock_started) return;
-  configTzTime(BUDDY_TZ, "pool.ntp.org", "time.nist.gov");
+  const String &tz = settings().tz;
+  if (!tz.length() || g_clock_started) return;
+  configTzTime(tz.c_str(), "pool.ntp.org", "time.nist.gov");
   g_clock_started = true;
-  Serial.printf("[ambient] timezone %s\n", BUDDY_TZ);
-#endif
+  Serial.printf("[ambient] timezone %s\n", tz.c_str());
 }
 
 // Open-Meteo is public forecast data. The root bundle is not enabled in this

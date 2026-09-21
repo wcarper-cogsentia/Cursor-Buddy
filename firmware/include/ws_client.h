@@ -6,7 +6,7 @@
 using SnapshotHandler = void (*)(const std::vector<BuddySession> &sessions, bool muted, const String &focused_id);
 using ConnHandler = void (*)(bool connected);
 
-void buddyWsBegin(SnapshotHandler onSnapshot, ConnHandler onConn);
+void buddyWsBegin(const String &host, uint16_t port, const String &path, SnapshotHandler onSnapshot, ConnHandler onConn);
 void buddyWsLoop();
 void buddyWsSuspend();
 void buddyWsResume();

@@ -13,13 +13,9 @@
 #include "ambient.h"
 #include "buzzer.h"
 #include "board.h"
-#include "config.h"
+#include "settings.h"
 #include "exio.h"
 #include "st7701.h"
-
-#ifndef BUDDY_DEVICE_NAME
-#define BUDDY_DEVICE_NAME "CURSOR BUDDY"
-#endif
 
 // Round 480×480: keep chrome inside the inscribed circle (r≈240).
 // Buttons sit on a chord well above the clipped bottom edge.
@@ -36,6 +32,11 @@ static const int CHEV_H = 44;
 static const int CHEV_Y = 300;
 static const int CHEV_L_X = 132;
 static const int CHEV_R_X = PANEL_W - 132 - CHEV_W;
+
+static const int SETUP_W = 140;
+static const int SETUP_H = 36;
+static const int SETUP_X = (PANEL_W - SETUP_W) / 2;
+static const int SETUP_Y = 426;
 
 static Arduino_ESP32RGBPanel *rgb = nullptr;
 static Arduino_RGB_Display *disp = nullptr;
@@ -55,6 +56,8 @@ static bool g_has_pending = false;
 static uint32_t g_last_draw = 0;
 static uint32_t g_last_input = 0;
 static bool touchBegan = false;
+static bool g_setup_screen = false;
+static bool g_setup_wanted = false;
 
 static uint16_t colorFor(BuddyState st) {
   switch (st) {
@@ -152,15 +155,15 @@ static int g_shown_status = -1;
 static int clockX() { return (PANEL_W - 5 * 6 * CLK_TIME_SIZE) / 2; }
 
 static void formatClock(const AmbientClock &c, char out[6], const char **ampm) {
-#if defined(BUDDY_24H) && BUDDY_24H
-  snprintf(out, 6, "%02d:%02d", c.hour, c.minute);
-  *ampm = nullptr;
-#else
+  if (settings().clock24h) {
+    snprintf(out, 6, "%02d:%02d", c.hour, c.minute);
+    *ampm = nullptr;
+    return;
+  }
   int h = c.hour % 12;
   if (h == 0) h = 12;
   snprintf(out, 6, "%2d:%02d", h, c.minute);
   *ampm = c.hour < 12 ? "AM" : "PM";
-#endif
 }
 
 static void drawTimeDigits(const char *hhmm) {
@@ -381,12 +384,25 @@ static void resetClockStamps() {
   g_shown_status = -1;
 }
 
+static void drawSetupButton() {
+  if (!gfx) return;
+  gfx->fillRoundRect(SETUP_X, SETUP_Y, SETUP_W, SETUP_H, 10, 0x2104);
+  gfx->setTextSize(2);
+  gfx->setTextColor(0xFFFF);
+  int16_t x1, y1;
+  uint16_t tw, th;
+  gfx->getTextBounds("SETUP", 0, 0, &x1, &y1, &tw, &th);
+  gfx->setCursor(SETUP_X + (SETUP_W - (int)tw) / 2, SETUP_Y + 10);
+  gfx->print("SETUP");
+}
+
 // Idle face: local time and weather while no Cursor session is on screen.
 static void drawAmbient(bool full) {
   if (!gfx) return;
   AmbientClock clock;
   ambientRead(clock);
-  if (full || !g_clock_face) {
+  bool cleared = full || !g_clock_face;
+  if (cleared) {
     fillScreen(0x0000);
     g_clock_face = true;
     resetClockStamps();
@@ -394,7 +410,17 @@ static void drawAmbient(bool full) {
   bool drew = paintClock(clock);
   if (paintWeather(clock)) drew = true;
   if (paintIdleStatus()) drew = true;
+  if (cleared) {
+    drawSetupButton();
+    drew = true;
+  }
   if (drew && disp) disp->flush();
+}
+
+static const char *deviceName() {
+  const char *name = settings().name.c_str();
+  if (!name || !name[0]) return "CURSOR BUDDY";
+  return name;
 }
 
 static void drawHero() {
@@ -431,7 +457,7 @@ static void drawHero() {
   fillScreen(0x0000);
   gfx->fillRoundRect(180, 36, 120, 6, 3, accent);
 
-  const char *title = g_offline ? "OFFLINE" : (st == BuddyState::Attention ? "ATTENTION" : BUDDY_DEVICE_NAME);
+  const char *title = g_offline ? "OFFLINE" : (st == BuddyState::Attention ? "ATTENTION" : deviceName());
   drawCentered(title, 58, accent, 2);
 
   // Default GFX font is ASCII-only; keep these single-byte.
@@ -586,7 +612,7 @@ static bool releaseRgbPanel() {
   return true;
 }
 
-void uiBegin() {
+void uiBegin(bool setupMode) {
   pinMode(LCD_BL_PIN, OUTPUT);
   digitalWrite(LCD_BL_PIN, HIGH);
   pinMode(CST820_INT_PIN, INPUT_PULLUP);
@@ -598,7 +624,34 @@ void uiBegin() {
   startPanel();
   touchReset();
   g_last_input = millis();
-  drawHero();
+  g_setup_screen = setupMode;
+  if (setupMode) {
+    fillScreen(0x0000);
+    if (disp) disp->flush();
+  } else {
+    drawHero();
+  }
+}
+
+void uiShowSetup(const char *apName, const char *url) {
+  g_setup_screen = true;
+  if (!gfx) return;
+  fillScreen(0x0000);
+  gfx->fillRoundRect(180, 44, 120, 6, 3, 0x047F);
+  drawCentered("SETUP", 78, 0x047F, 3);
+  drawCentered("Join this Wi-Fi", 140, 0xC618, 2);
+  drawCentered(apName ? apName : "Buddy", 176, 0xFFFF, 3);
+  drawCentered("No password", 220, 0x8410, 2);
+  drawCentered("Then open", 270, 0xC618, 2);
+  drawCentered(url ? url : "192.168.4.1", 306, 0xFFFF, 3);
+  drawCentered("It may open on its own", 360, 0x8410, 2);
+  if (disp) disp->flush();
+}
+
+bool uiPollSetup() {
+  if (!g_setup_wanted) return false;
+  g_setup_wanted = false;
+  return true;
 }
 
 void uiSetOffline(bool offline) {
@@ -689,6 +742,8 @@ static const int SW_COUNT = 4;
 static bool g_sw_armed = false;
 static bool g_sw_down[SW_COUNT];
 static uint32_t g_sw_since[SW_COUNT];
+static int g_release_action = -1;
+static uint32_t g_chord_since = 0;
 
 void uiArmSwitches() {
   Serial.flush();
@@ -717,8 +772,21 @@ static void onSwitch(int index) {
 }
 
 static void pollSwitches() {
-  if (!g_sw_armed) return;
+  if (!g_sw_armed || g_setup_screen) return;
   uint32_t now = millis();
+  bool mute = digitalRead(SW_MUTE_PIN) == LOW;
+  bool dismiss = digitalRead(SW_DISMISS_PIN) == LOW;
+  if (mute && dismiss) {
+    g_last_input = now;
+    if (!g_chord_since) g_chord_since = now;
+    else if (!g_setup_wanted && now - g_chord_since >= 2000) {
+      g_release_action = -1;
+      g_setup_wanted = true;
+    }
+  } else {
+    g_chord_since = 0;
+  }
+
   for (int i = 0; i < SW_COUNT; i++) {
     bool down = digitalRead(SW_PINS[i]) == LOW;
     if (down) g_last_input = now;
@@ -731,10 +799,22 @@ static void pollSwitches() {
       continue;
     }
     if (now - g_sw_since[i] < SW_DEBOUNCE_MS) continue;
-    if (down && g_has_pending) continue;
     g_sw_down[i] = down;
     g_sw_since[i] = 0;
-    if (down) onSwitch(i);
+    if (g_setup_wanted) continue;
+    if (i == 2 || i == 3) {
+      if (mute && dismiss) {
+        g_release_action = -1;
+        continue;
+      }
+      if (down) g_release_action = i;
+      else if (g_release_action == i) {
+        g_release_action = -1;
+        if (!g_has_pending) onSwitch(i);
+      }
+      continue;
+    }
+    if (down && !g_has_pending) onSwitch(i);
   }
 }
 
@@ -752,6 +832,8 @@ static void syncInputs() {
   touchBegan = readTouch(x, y);
   g_last_input = millis();
   if (!g_sw_armed) return;
+  g_release_action = -1;
+  g_chord_since = 0;
   for (int i = 0; i < SW_COUNT; i++) {
     g_sw_down[i] = digitalRead(SW_PINS[i]) == LOW;
     g_sw_since[i] = 0;
@@ -786,12 +868,16 @@ void uiRestoreAfterSleep() {
 }
 
 void uiLoop() {
+  if (g_setup_screen) return;
   int16_t x, y;
   if (readTouch(x, y)) {
     g_last_input = millis();
     if (!touchBegan) {
       touchBegan = true;
-      if (!g_offline && g_sessions.size() > 1 && y >= CHEV_Y && y < CHEV_Y + CHEV_H) {
+      if (g_sessions.empty() && x >= SETUP_X - 8 && x < SETUP_X + SETUP_W + 8 && y >= SETUP_Y - 6 &&
+          y < SETUP_Y + SETUP_H + 10) {
+        g_setup_wanted = true;
+      } else if (!g_offline && g_sessions.size() > 1 && y >= CHEV_Y && y < CHEV_Y + CHEV_H) {
         if (x >= CHEV_L_X && x < CHEV_L_X + CHEV_W) stepView(-1);
         else if (x >= CHEV_R_X && x < CHEV_R_X + CHEV_W) stepView(1);
       } else if (!g_sessions.empty() && y >= BTN_Y && y <= BTN_Y + BTN_H) {

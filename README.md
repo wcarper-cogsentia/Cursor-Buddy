@@ -39,7 +39,7 @@ In a second terminal:
 ./scripts/install-hooks.sh
 curl -s http://127.0.0.1:8787/health
 tail -f ~/Library/Logs/cursor-buddy/hooks.jsonl
-ipconfig getifaddr en0   # LAN IP for firmware config.h
+ipconfig getifaddr en0   # LAN IP, if the puck setup page needs one
 ```
 
 AskQuestion is read from `~/Library/Application Support/Cursor/logs`.
@@ -60,7 +60,7 @@ The execution-policy line lasts for that window only. In a second PowerShell win
 python .\scripts\install_hooks.py
 curl.exe -s http://127.0.0.1:8787/health
 Get-Content "$env:LOCALAPPDATA\cursor-buddy\hooks.jsonl" -Wait
-ipconfig   # IPv4 address for firmware config.h
+ipconfig   # IPv4 address, if the puck setup page needs one
 ```
 
 If `python` opens the Microsoft Store instead of running, use the `py -3.12` launcher in both commands. AskQuestion is read from `%APPDATA%\Cursor\logs`.
@@ -80,7 +80,7 @@ In a second terminal:
 ./scripts/install-hooks.sh
 curl -s http://127.0.0.1:8787/health
 tail -f "${XDG_STATE_HOME:-$HOME/.local/state}/cursor-buddy/hooks.jsonl"
-hostname -I   # LAN IP for firmware config.h
+hostname -I   # LAN IP, if the puck setup page needs one
 ```
 
 AskQuestion is read from `${XDG_CONFIG_HOME:-~/.config}/Cursor/logs`.
@@ -137,18 +137,25 @@ Requirements: [PlatformIO](https://platformio.org/) CLI or IDE.
 ```bash
 cd firmware
 cp include/config.h.example include/config.h
-# Edit WIFI SSID/password and BUDDY_HOST (your computer's LAN IP)
 pio run -t upload
 pio device monitor
 ```
+
+Wi-Fi, the Buddy service host, the name on the puck, and the clock and weather options are stored on the device. `config.h` is only a first-boot copy: fill it in and that first boot saves it onto the puck, or leave the placeholders and set everything from a phone.
+
+With nothing saved, or when you ask, the puck opens an unsecured Wi-Fi network named `Buddy-` plus four characters from its MAC address. The screen shows that name. Join it, and open [http://192.168.4.1](http://192.168.4.1) if the setup page does not appear on its own. Enter the Wi-Fi network and the computer running Buddy. The service host can be an IP address or a hostname such as `macbook.local`, so a new DHCP lease does not require a reflash. Then reconnect the phone to the normal network.
+
+Open that page again from the clock's **SETUP** button, or by holding Mute and Dismiss together for two seconds. Holding those two while the puck turns on does the same thing, which still works if the touch screen does not.
+
+Once the puck has saved its settings, putting the placeholders back into `config.h` keeps later flashes from writing a password into the firmware. The copy already on the puck stays.
 
 **Display note:** Panel bring-up varies by Waveshare demo revision. If the screen stays blank, replace the bus/panel init in `src/ui.cpp` with the exact init from Waveshare’s official Arduino example for **ESP32-S3-Touch-LCD-2.1**, keeping `drawHero()` / touch button regions. Buzzer default pin is `42` (`BUDDY_BUZZER_PIN`).
 
 Touch: MUTE / UNMUTE and DISMISS send WebSocket `ack` messages back to the service.
 
-With no active sessions, and while the screen is awake, the puck shows the local time and the current weather. That lookup needs outbound internet. Location follows the public IP address unless `BUDDY_TZ`, `BUDDY_LATITUDE`, and `BUDDY_LONGITUDE` are set in `config.h` (see `config.h.example`).
+With no active sessions, and while the screen is awake, the puck shows the local time and the current weather. That lookup needs outbound internet. Location follows the public IP address unless a timezone and coordinates were saved on the setup page.
 
-On battery, the display sleeps after 30 minutes with no touch or button press. Touch the screen or any of the four header buttons to wake it; Wi-Fi reconnects and the last view is drawn again. While USB is powering the board it stays awake. This board has no USB-present pin, so that decision follows the battery voltage on GPIO4: sleep runs only after the pack has been discharging. Alerts that arrive during sleep show up on the next wake.
+On battery, the display sleeps after 30 minutes with no touch or button press. Change that on the setup page. Touch the screen or any of the four header buttons to wake it; Wi-Fi reconnects and the last view is drawn again. While USB is powering the board it stays awake. This board has no USB-present pin, so that decision follows the battery voltage on GPIO4: sleep runs only after the pack has been discharging. Alerts that arrive during sleep show up on the next wake.
 
 ## Tests
 

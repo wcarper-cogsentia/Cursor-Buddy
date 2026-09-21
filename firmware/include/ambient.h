@@ -1,8 +1,8 @@
 #pragma once
 
 // Local clock and weather for the idle face. Time is synced over NTP.
-// Weather comes from Open-Meteo. With no lat/long in config.h, the location
-// is the network's public IP.
+// Weather comes from Open-Meteo. With no coordinates stored on the puck,
+// the location is the network's public IP.
 
 struct AmbientClock {
   bool valid;

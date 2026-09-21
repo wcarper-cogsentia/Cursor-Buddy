@@ -2,11 +2,6 @@
 
 #include <Arduino.h>
 
-// Idle time with no touch or button before battery sleep. Override in config.h.
-#ifndef BUDDY_BATTERY_IDLE_MS
-#define BUDDY_BATTERY_IDLE_MS (30UL * 60UL * 1000UL)
-#endif
-
 void powerBegin();
 // Call from loop. Samples pack voltage about once a minute.
 void powerSample();
