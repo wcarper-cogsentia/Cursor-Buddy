@@ -1,15 +1,16 @@
 {
   "version": 1,
   "hooks": {
-    "sessionStart": [{ "command": "BUDDY_FORWARD" }],
-    "sessionEnd": [{ "command": "BUDDY_FORWARD" }],
-    "beforeSubmitPrompt": [{ "command": "BUDDY_FORWARD" }],
-    "preToolUse": [{ "command": "BUDDY_FORWARD" }],
-    "postToolUseFailure": [{ "command": "BUDDY_FORWARD" }],
-    "stop": [{ "command": "BUDDY_FORWARD" }],
-    "afterAgentResponse": [{ "command": "BUDDY_FORWARD" }],
-    "afterAgentThought": [{ "command": "BUDDY_FORWARD" }],
-    "subagentStart": [{ "command": "BUDDY_FORWARD" }],
-    "subagentStop": [{ "command": "BUDDY_FORWARD" }]
+    "sessionStart": [{ "command": "BUDDY_FORWARD", "timeout": 2 }],
+    "sessionEnd": [{ "command": "BUDDY_FORWARD", "timeout": 2 }],
+    "beforeSubmitPrompt": [{ "command": "BUDDY_FORWARD", "timeout": 2 }],
+    "preToolUse": [{ "command": "BUDDY_FORWARD", "timeout": 2 }],
+    "postToolUseFailure": [{ "command": "BUDDY_FORWARD", "timeout": 2 }],
+    "stop": [{ "command": "BUDDY_FORWARD", "timeout": 2 }],
+    "afterAgentResponse": [{ "command": "BUDDY_FORWARD", "timeout": 2 }],
+    "subagentStart": [{ "command": "BUDDY_FORWARD", "timeout": 2 }],
+    "subagentStop": [{ "command": "BUDDY_FORWARD", "timeout": 2 }],
+    "beforeMCPExecution": [{ "command": "BUDDY_FORWARD", "timeout": 2 }],
+    "beforeShellExecution": [{ "command": "BUDDY_FORWARD", "timeout": 2 }]
   }
 }

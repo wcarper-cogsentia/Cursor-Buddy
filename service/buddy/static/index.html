@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cursor Buddy — Local Receiver</title>
+  <style>
+    :root {
+      --bg: #0b0c0f;
+      --panel: #14161b;
+      --line: #262a33;
+      --text: #e8e6df;
+      --muted: #8b8f99;
+      --working: #3d8bfd;
+      --attention: #f0a202;
+      --complete: #3dcc7a;
+      --error: #ff5c5c;
+      --idle: #6d7380;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+    }
+
+    body {
+      background:
+        radial-gradient(circle at 50% -10%, color-mix(in srgb, var(--glow, #3d8bfd) 18%, transparent), transparent 42%),
+        var(--bg);
+    }
+
+    .wrap {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 28px 20px 48px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .brand {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      letter-spacing: 0.08em;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    h1 {
+      margin: 6px 0 0;
+      font-size: 28px;
+      font-weight: 650;
+      letter-spacing: -0.03em;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .pill, button.pill {
+      border: 1px solid var(--line);
+      background: #111318;
+      color: var(--text);
+      border-radius: 999px;
+      padding: 7px 12px;
+      font: 12px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      letter-spacing: 0.04em;
+    }
+
+    button.pill { cursor: pointer; }
+    button.pill:hover { border-color: #3a404c; }
+    button.pill:disabled { opacity: 0.45; cursor: default; }
+
+    .dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      margin-right: 7px;
+      background: var(--idle);
+      vertical-align: 0;
+    }
+
+    .live .dot { background: var(--complete); box-shadow: 0 0 0 3px color-mix(in srgb, var(--complete) 25%, transparent); }
+    .down .dot { background: var(--error); }
+
+    .hero {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 22px;
+      min-height: 220px;
+      padding: 36px 24px;
+      text-align: center;
+      margin-bottom: 18px;
+    }
+
+    .hero .glyph {
+      font-size: 42px;
+      line-height: 1;
+      margin-bottom: 14px;
+    }
+
+    .hero .state-name {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      letter-spacing: 0.08em;
+      font-size: 15px;
+      margin-bottom: 10px;
+    }
+
+    .hero .project {
+      font-size: 32px;
+      font-weight: 650;
+      letter-spacing: -0.03em;
+    }
+
+    .hero .message, .hero .clock {
+      color: var(--muted);
+      margin-top: 10px;
+    }
+
+    .hero .message {
+      max-width: 34em;
+      margin-left: auto;
+      margin-right: auto;
+      line-height: 1.35;
+    }
+
+    .hero-actions {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .hero-actions button {
+      min-width: 110px;
+      cursor: pointer;
+    }
+
+    .run {
+      background: color-mix(in srgb, var(--complete) 18%, #111318);
+      border-color: color-mix(in srgb, var(--complete) 45%, var(--line));
+      color: var(--complete);
+    }
+
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card {
+      display: grid;
+      grid-template-columns: 8px 1fr auto;
+      gap: 14px;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px 14px 14px 0;
+      cursor: pointer;
+    }
+
+    .card.focused {
+      border-color: color-mix(in srgb, var(--glow) 55%, var(--line));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glow) 35%, transparent);
+    }
+
+    .bar { height: 100%; min-height: 64px; border-radius: 16px 0 0 16px; }
+
+    .project-name { font-size: 20px; font-weight: 620; }
+    .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
+    .right { text-align: right; }
+    .state-label {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+    }
+    .elapsed { color: var(--muted); font-size: 13px; margin: 6px 0; }
+
+    .dismiss {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 5px 8px;
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    .dismiss:hover { color: var(--text); }
+
+    .sim {
+      margin-top: 28px;
+      border-top: 1px solid var(--line);
+      padding-top: 18px;
+    }
+
+    .sim h2 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      font-weight: 600;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    input {
+      background: #111318;
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 10px;
+      min-width: 140px;
+    }
+
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <div class="brand">LOCAL RECEIVER</div>
+        <h1>Cursor Buddy</h1>
+      </div>
+      <div class="meta">
+        <div id="conn" class="pill down"><span class="dot"></span><span id="connLabel">connecting</span></div>
+        <div id="count" class="pill">0 agents</div>
+        <button id="muteBtn" class="pill" type="button">🔊 ON</button>
+        <button id="clearBtn" class="pill" type="button">Clear</button>
+      </div>
+    </header>
+
+    <section id="hero" class="hero"></section>
+    <section id="list" class="list"></section>
+
+    <section id="sim" class="sim hidden">
+      <h2>SIMULATE SESSIONS</h2>
+      <div class="row">
+        <input id="simProject" value="SCOT" aria-label="Project" />
+        <input id="simSession" value="demo-1" aria-label="Session id" />
+      </div>
+      <div class="row">
+        <button class="pill" data-sim="working" type="button">Working</button>
+        <button class="pill" data-sim="attention" type="button">Attention</button>
+        <button class="pill" data-sim="complete" type="button">Complete</button>
+        <button class="pill" data-sim="error" type="button">Error</button>
+        <button class="pill" id="seedBtn" type="button">Load 3 demos</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const META = {
+      working:   { label: "WORKING", glyph: "●", color: "var(--working)" },
+      attention: { label: "NEEDS ATTENTION", glyph: "!", color: "var(--attention)" },
+      complete:  { label: "COMPLETE", glyph: "✓", color: "var(--complete)" },
+      error:     { label: "ERROR", glyph: "✕", color: "var(--error)" },
+      idle:      { label: "IDLE", glyph: "○", color: "var(--idle)" },
+    };
+
+    let snapshot = { sessions: [], muted: false };
+    let receivedAt = Date.now();
+    let socket = null;
+    let tick = null;
+
+    const $ = (id) => document.getElementById(id);
+
+    function formatElapsed(seconds) {
+      const s = Math.max(0, Math.floor(seconds));
+      if (s < 60) return `${String(s).padStart(2, "0")}s`;
+      const m = Math.floor(s / 60);
+      const r = s % 60;
+      if (m < 60) return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
+      return `${Math.floor(m / 60)}h ${m % 60}m`;
+    }
+
+    function liveElapsed(session) {
+      const base = Number(session.elapsed_seconds || 0);
+      if (session.state !== "working") return base;
+      return base + (Date.now() - receivedAt) / 1000;
+    }
+
+    function sendAck(action, sessionId) {
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ type: "ack", action, session_id: sessionId || "" }));
+    }
+
+    function focusedSession(sessions) {
+      const id = snapshot.focused_session_id || "";
+      return sessions.find((item) => item.session_id === id) || sessions[0];
+    }
+
+    function render() {
+      const sessions = snapshot.sessions || [];
+      const muted = Boolean(snapshot.muted);
+      const focus = focusedSession(sessions);
+      const glowVar = `--${focus ? focus.state : "idle"}`;
+      const glow = getComputedStyle(document.documentElement).getPropertyValue(glowVar).trim() || "#6d7380";
+      document.documentElement.style.setProperty("--glow", glow);
+
+      $("count").textContent = `${sessions.length} agent${sessions.length === 1 ? "" : "s"}`;
+      $("muteBtn").textContent = muted ? "🔇 MUTED" : "🔊 ON";
+
+      const hero = $("hero");
+      if (!focus) {
+        hero.innerHTML = `
+          <div class="glyph" style="color:var(--idle)">○</div>
+          <div class="state-name" style="color:var(--idle)">IDLE</div>
+          <div class="project">Waiting for agents</div>
+          <div class="message">Listening for live Cursor sessions.</div>
+        `;
+      } else {
+        const meta = META[focus.state] || META.idle;
+        const idx = sessions.findIndex((item) => item.session_id === focus.session_id);
+        const actions = focus.can_act ? `
+          <div class="hero-actions">
+            <button class="pill" data-act="cancel" data-session="${escapeAttr(focus.session_id)}" type="button">Cancel</button>
+            <button class="pill run" data-act="run" data-session="${escapeAttr(focus.session_id)}" type="button">Run</button>
+          </div>` : "";
+        hero.innerHTML = `
+          <div class="glyph" style="color:${meta.color}">${meta.glyph}</div>
+          <div class="state-name" style="color:${meta.color}">${meta.label}</div>
+          <div class="project">${escapeHtml(focus.project || "Cursor")}</div>
+          <div class="message">${escapeHtml(focus.message || "")}</div>
+          <div class="clock" id="heroClock">${formatElapsed(liveElapsed(focus))}${sessions.length > 1 ? ` · ${idx + 1} / ${sessions.length}` : ""}</div>
+          ${actions}
+        `;
+      }
+
+      $("list").innerHTML = sessions.map((session) => {
+        const meta = META[session.state] || META.idle;
+        const selected = focus && session.session_id === focus.session_id;
+        return `
+          <article class="card${selected ? " focused" : ""}" data-focus="${escapeAttr(session.session_id)}">
+            <div class="bar" style="background:${meta.color}"></div>
+            <div>
+              <div class="project-name">${escapeHtml(session.project || "Cursor")}</div>
+              <div class="sub">${escapeHtml(session.message || session.session_id)}</div>
+            </div>
+            <div class="right">
+              <div class="state-label" style="color:${meta.color}">${meta.glyph} ${meta.label}</div>
+              <div class="elapsed" data-elapsed="${escapeAttr(session.session_id)}">${formatElapsed(liveElapsed(session))}</div>
+              ${session.can_act ? `
+                <button class="dismiss" data-act="cancel" data-session="${escapeAttr(session.session_id)}" type="button">Cancel</button>
+                <button class="dismiss run" data-act="run" data-session="${escapeAttr(session.session_id)}" type="button">Run</button>
+              ` : `<button class="dismiss" data-dismiss="${escapeAttr(session.session_id)}" type="button">Dismiss</button>`}
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function tickElapsed() {
+      const sessions = snapshot.sessions || [];
+      const focus = focusedSession(sessions);
+      const heroClock = $("heroClock");
+      if (heroClock && focus) {
+        heroClock.textContent = formatElapsed(liveElapsed(focus));
+      }
+      for (const el of document.querySelectorAll("[data-elapsed]")) {
+        const session = sessions.find((item) => item.session_id === el.dataset.elapsed);
+        if (session) el.textContent = formatElapsed(liveElapsed(session));
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replaceAll("'", "&#39;");
+    }
+
+    function setConn(kind, label) {
+      const el = $("conn");
+      el.className = `pill ${kind}`;
+      $("connLabel").textContent = label;
+    }
+
+    function connect() {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      socket = new WebSocket(`${proto}://${location.host}/ws`);
+      socket.onopen = () => setConn("live", "live");
+      socket.onclose = () => {
+        setConn("down", "reconnecting");
+        setTimeout(connect, 1000);
+      };
+      socket.onerror = () => socket.close();
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data && data.type === "snapshot") {
+            snapshot = data;
+            receivedAt = Date.now();
+            render();
+          }
+        } catch {
+          /* ignore malformed frames */
+        }
+      };
+    }
+
+    async function ingest(payload) {
+      const response = await fetch("/ingest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error(`ingest ${response.status}`);
+      }
+    }
+
+    function hookFor(state, sessionId, project) {
+      if (state === "working") {
+        return { hook_event_name: "beforeSubmitPrompt", conversation_id: sessionId, _buddy_project: project };
+      }
+      if (state === "attention") {
+        return {
+          hook_event_name: "beforeMCPExecution",
+          conversation_id: sessionId,
+          tool_name: "MCP:browser_navigate",
+          tool_input: { url: "https://sentry.io/" },
+          _buddy_gate: true,
+          _buddy_project: project,
+        };
+      }
+      if (state === "error") {
+        return { hook_event_name: "stop", conversation_id: sessionId, status: "error", _buddy_project: project };
+      }
+      return { hook_event_name: "stop", conversation_id: sessionId, status: "completed", _buddy_project: project };
+    }
+
+    $("muteBtn").addEventListener("click", () => {
+      sendAck(snapshot.muted ? "unmute" : "mute");
+    });
+    $("clearBtn").addEventListener("click", () => sendAck("clear"));
+    $("hero").addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-act]");
+      if (btn) sendAck(btn.dataset.act, btn.dataset.session);
+    });
+    $("list").addEventListener("click", (event) => {
+      const act = event.target.closest("[data-act]");
+      if (act) {
+        sendAck(act.dataset.act, act.dataset.session);
+        return;
+      }
+      const btn = event.target.closest("[data-dismiss]");
+      if (btn) {
+        sendAck("dismiss", btn.dataset.dismiss);
+        return;
+      }
+      const card = event.target.closest("[data-focus]");
+      if (card) sendAck("focus", card.dataset.focus);
+    });
+
+    if (["127.0.0.1", "localhost"].includes(location.hostname)) {
+      $("sim").classList.remove("hidden");
+      for (const btn of document.querySelectorAll("[data-sim]")) {
+        btn.addEventListener("click", async () => {
+          await ingest(hookFor(btn.dataset.sim, $("simSession").value || "demo-1", $("simProject").value || "SCOT"));
+        });
+      }
+      $("seedBtn").addEventListener("click", async () => {
+        await ingest(hookFor("working", "demo-scot", "SCOT"));
+        await ingest(hookFor("attention", "demo-aiden", "Aiden"));
+        await ingest(hookFor("complete", "demo-tomaz", "Tomaz"));
+      });
+    }
+
+    tick = setInterval(tickElapsed, 1000);
+    render();
+    connect();
+  </script>
+</body>
+</html>

@@ -30,6 +30,16 @@ See [docs/protocol.md](docs/protocol.md) for the JSON protocol.
 
 Listens on `0.0.0.0:8787` (WebSocket `/ws`). Ingest `POST /ingest` is **localhost-only**.
 
+Open the **local receiver** in a browser to watch every session live:
+
+[http://127.0.0.1:8787/](http://127.0.0.1:8787/)
+
+It connects to the same `/ws` snapshot stream the ESP32 will use, and can dismiss sessions, mute alerts, or **Clear** all old session data. On localhost it also exposes a small simulator so you can drive states without Cursor. To reset from the shell:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/clear
+```
+
 Health check:
 
 ```bash
@@ -42,9 +52,9 @@ curl -s http://127.0.0.1:8787/health
 ./scripts/install-hooks.sh
 ```
 
-This merges Buddy forwarders into `~/.cursor/hooks.json` and symlinks `hooks/forward.py`. Cursor reloads hooks automatically.
+This merges Buddy forwarders into `~/.cursor/hooks.json` and symlinks the fire-and-forget shell wrapper. Cursor reloads hooks automatically.
 
-Hooks are **fail-open**: if the service is down, Cursor is never blocked. Events are always appended to:
+Hooks are **fail-open** and return immediately: ingest happens in the background so agents are not stalled. Events are always appended to:
 
 `~/Library/Logs/cursor-buddy/hooks.jsonl`
 
@@ -63,6 +73,8 @@ echo '{"hook_event_name":"stop","status":"completed","conversation_id":"test"}' 
 ```
 
 ### 4. Dev without the ESP32
+
+Keep the service running and open [http://127.0.0.1:8787/](http://127.0.0.1:8787/). Use **Load 3 demos** or the state buttons, or ingest from the shell:
 
 ```bash
 # Simulate working
@@ -106,6 +118,7 @@ cd service && .venv/bin/pytest tests -q
 ```
 cursor-buddy/
   service/buddy/     Mac service (FastAPI + WebSocket)
+  service/buddy/static/  Local browser receiver
   hooks/             Cursor hook forwarder
   firmware/          ESP32 PlatformIO project
   scripts/           install-hooks, run-service, capture-hooks

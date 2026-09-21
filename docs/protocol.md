@@ -17,12 +17,14 @@ Sent on connect and whenever session state or mute changes.
       "session_id": "a82f91",
       "project": "SCOT",
       "state": "attention",
-      "message": "Agent waiting for user",
+      "message": "browser_navigate https://sentry.io/",
       "elapsed_seconds": 384,
       "updated_at": "2026-09-20T15:42:18-06:00",
-      "source": "cursor"
+      "source": "cursor",
+      "can_act": true
     }
   ],
+  "focused_session_id": "a82f91",
   "muted": false
 }
 ```
@@ -46,6 +48,9 @@ Sent on connect and whenever session state or mute changes.
 | Action | Effect |
 |--------|--------|
 | `dismiss` | Remove session from active list (or mark dismissed) |
+| `focus` | Pin this session as the hero on web and device |
+| `run` | Allow the waiting Cursor hook (`beforeMCPExecution`) |
+| `cancel` | Deny the waiting Cursor hook |
 | `mute` | Global mute on |
 | `unmute` | Global mute off |
 

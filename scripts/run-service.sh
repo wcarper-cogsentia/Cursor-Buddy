@@ -8,4 +8,5 @@ if [[ ! -d .venv ]]; then
 fi
 export BUDDY_HOST="${BUDDY_HOST:-0.0.0.0}"
 export BUDDY_PORT="${BUDDY_PORT:-8787}"
+echo "Local receiver: http://127.0.0.1:${BUDDY_PORT}/"
 exec .venv/bin/python -m buddy

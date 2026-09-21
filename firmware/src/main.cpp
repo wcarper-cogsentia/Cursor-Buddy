@@ -1,12 +1,13 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include "config.h"
+#include "exio.h"
 #include "buzzer.h"
 #include "ui.h"
 #include "ws_client.h"
 
-static void onSnapshot(const std::vector<BuddySession> &sessions, bool muted) {
-  uiApplySnapshot(sessions, muted);
+static void onSnapshot(const std::vector<BuddySession> &sessions, bool muted, const String &focused_id) {
+  uiApplySnapshot(sessions, muted, focused_id);
 }
 
 static void onConn(bool connected) {
@@ -18,7 +19,9 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.println("Cursor Buddy ESP32");
+  Serial.printf("PSRAM: %u free %u\n", ESP.getPsramSize(), ESP.getFreePsram());
 
+  exioBegin();
   buzzerBegin();
   uiBegin();
   uiSetOffline(true);

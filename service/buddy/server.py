@@ -9,11 +9,15 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from buddy.project import project_from_hook_env_and_payload
 from buddy.state import BuddyState
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 logger = logging.getLogger("cursor-buddy")
 
@@ -24,6 +28,11 @@ PORT = int(os.environ.get("BUDDY_PORT", "8787"))
 state = BuddyState()
 _clients: set[WebSocket] = set()
 _loop: asyncio.AbstractEventLoop | None = None
+
+
+def _is_localhost(request: Request) -> bool:
+    client = request.client.host if request.client else ""
+    return client in ("127.0.0.1", "::1", "localhost")
 
 
 async def _broadcast_snapshot() -> None:
@@ -53,11 +62,17 @@ async def lifespan(app: FastAPI):
     global _loop
     _loop = asyncio.get_running_loop()
     logger.info("Buddy listening ingest+ws on %s:%s (bind %s)", PUBLIC_HOST, PORT, PUBLIC_HOST)
+    logger.info("Local receiver: http://127.0.0.1:%s/", PORT)
     yield
     _clients.clear()
 
 
 app = FastAPI(title="Cursor Buddy", version="0.1.0", lifespan=lifespan)
+
+
+@app.get("/")
+async def receiver() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/health")
@@ -70,11 +85,28 @@ async def get_snapshot() -> dict[str, Any]:
     return state.snapshot()
 
 
+@app.post("/clear")
+async def clear_sessions(request: Request) -> JSONResponse:
+    if not _is_localhost(request):
+        return JSONResponse({"ok": False, "error": "localhost only"}, status_code=403)
+    state.clear()
+    return JSONResponse({"ok": True, "sessions": 0, "muted": False})
+
+
+def _project_for(payload: dict[str, Any]) -> str:
+    project = project_from_hook_env_and_payload(payload)
+    if isinstance(payload.get("_buddy_project"), str) and payload["_buddy_project"]:
+        project = payload["_buddy_project"]
+    return project
+
+
+def _session_id(payload: dict[str, Any]) -> str:
+    return str(payload.get("conversation_id") or payload.get("session_id") or "")
+
+
 @app.post("/ingest")
 async def ingest(request: Request) -> JSONResponse:
-    # Localhost-only ingest: reject non-loopback clients
-    client = request.client.host if request.client else ""
-    if client not in ("127.0.0.1", "::1", "localhost"):
+    if not _is_localhost(request):
         return JSONResponse({"ok": False, "error": "localhost only"}, status_code=403)
     try:
         payload = await request.json()
@@ -83,15 +115,37 @@ async def ingest(request: Request) -> JSONResponse:
     if not isinstance(payload, dict):
         return JSONResponse({"ok": False, "error": "object required"}, status_code=400)
 
-    project = project_from_hook_env_and_payload(payload)
-    # Prefer project injected by forwarder
-    if isinstance(payload.get("_buddy_project"), str) and payload["_buddy_project"]:
-        project = payload["_buddy_project"]
     try:
-        state.apply_hook(payload, project)
+        state.apply_hook(payload, _project_for(payload))
     except Exception:
         logger.exception("ingest apply_hook failed")
     return JSONResponse({"ok": True})
+
+
+@app.post("/gate")
+async def gate(request: Request) -> JSONResponse:
+    """Hold a Cursor hook until Buddy Run/Cancel, then return allow/deny."""
+    if not _is_localhost(request):
+        return JSONResponse({"permission": "allow", "error": "localhost only"}, status_code=403)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"permission": "allow"})
+    if not isinstance(payload, dict):
+        return JSONResponse({"permission": "allow"})
+
+    sid = _session_id(payload)
+    try:
+        state.apply_hook(payload, _project_for(payload))
+    except Exception:
+        logger.exception("gate apply_hook failed")
+        return JSONResponse({"permission": "allow"})
+    if not sid:
+        return JSONResponse({"permission": "allow"})
+    decision = await asyncio.to_thread(state.wait_decision, sid, 90.0)
+    if decision == "deny":
+        return JSONResponse({"permission": "deny", "user_message": "Denied from Cursor Buddy"})
+    return JSONResponse({"permission": "allow"})
 
 
 @app.websocket("/ws")
@@ -114,8 +168,14 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 state.set_muted(True)
             elif action == "unmute":
                 state.set_muted(False)
+            elif action == "clear":
+                state.clear()
             elif action == "dismiss" and session_id:
                 state.dismiss(session_id)
+            elif action == "focus" and session_id:
+                state.focus(session_id)
+            elif action in ("run", "cancel", "allow", "deny") and session_id:
+                state.decide(session_id, action)
     except WebSocketDisconnect:
         pass
     finally:

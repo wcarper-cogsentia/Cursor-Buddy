@@ -16,6 +16,7 @@ static void handlePayload(uint8_t *payload, size_t length) {
   if (doc["type"] != "snapshot") return;
 
   bool muted = doc["muted"] | false;
+  String focused_id = doc["focused_session_id"] | "";
   std::vector<BuddySession> sessions;
   JsonArray arr = doc["sessions"].as<JsonArray>();
   for (JsonObject o : arr) {
@@ -25,9 +26,10 @@ static void handlePayload(uint8_t *payload, size_t length) {
     s.state = parseState(o["state"] | "idle");
     s.message = o["message"] | "";
     s.elapsed_seconds = o["elapsed_seconds"] | 0;
+    s.can_act = o["can_act"] | false;
     if (s.session_id.length()) sessions.push_back(s);
   }
-  if (g_onSnapshot) g_onSnapshot(sessions, muted);
+  if (g_onSnapshot) g_onSnapshot(sessions, muted, focused_id);
 }
 
 static void onWsEvent(WStype_t type, uint8_t *payload, size_t length) {

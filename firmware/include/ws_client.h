@@ -3,7 +3,7 @@
 #include "buddy_protocol.h"
 #include <vector>
 
-using SnapshotHandler = void (*)(const std::vector<BuddySession> &sessions, bool muted);
+using SnapshotHandler = void (*)(const std::vector<BuddySession> &sessions, bool muted, const String &focused_id);
 using ConnHandler = void (*)(bool connected);
 
 void buddyWsBegin(SnapshotHandler onSnapshot, ConnHandler onConn);

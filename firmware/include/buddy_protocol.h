@@ -17,6 +17,7 @@ struct BuddySession {
   BuddyState state = BuddyState::Idle;
   String message;
   int elapsed_seconds = 0;
+  bool can_act = false;
 };
 
 static inline BuddyState parseState(const String &s) {

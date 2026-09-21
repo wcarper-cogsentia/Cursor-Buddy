@@ -1,43 +1,55 @@
 /**
- * Minimal 480×480 status UI for Waveshare ESP32-S3-Touch-LCD-2.1.
- *
- * Uses Arduino_GFX when available. If the panel does not initialize with the
- * generic ST7701 wiring below, replace uiBegin()'s bus/panel setup with the
- * exact init from Waveshare's official Arduino demo for this board — keep the
- * draw*() helpers unchanged.
+ * Waveshare ESP32-S3-Touch-LCD-2.1 UI:
+ * ST7701 RGB panel + CST820 touch + TCA9554 expander.
  */
 
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
+#include <display/Arduino_RGB_Display.h>
+#include <Wire.h>
 #include "ui.h"
 #include "buzzer.h"
+#include "board.h"
+#include "exio.h"
+#include "st7701.h"
 
 #ifndef BUDDY_DEVICE_NAME
 #define BUDDY_DEVICE_NAME "CURSOR BUDDY"
 #endif
 
-// --- Waveshare ESP32-S3-Touch-LCD-2.1 typical RGB/SPI pins (verify against wiki) ---
-#define LCD_BL 38
+// Round 480×480: keep chrome inside the inscribed circle (r≈240).
+// Buttons sit on a chord well above the clipped bottom edge.
+static const int BTN_Y = 348;
+static const int BTN_H = 50;
+static const int BTN_W = 138;
+static const int BTN_GAP = 16;
+static const int BTN_L_X = (PANEL_W - (BTN_W * 2 + BTN_GAP)) / 2;
+static const int BTN_R_X = BTN_L_X + BTN_W + BTN_GAP;
 
-static Arduino_DataBus *bus = nullptr;
+static Arduino_ESP32RGBPanel *rgb = nullptr;
+static Arduino_RGB_Display *disp = nullptr;
 static Arduino_GFX *gfx = nullptr;
 
 static std::vector<BuddySession> g_sessions;
 static bool g_muted = false;
 static bool g_offline = true;
+static bool g_can_act = false;
 static BuddyState g_focus = BuddyState::Idle;
+static String g_focused_id;
+static size_t g_focus_idx = 0;
 static String g_pending_session;
 static String g_pending_action;
 static bool g_has_pending = false;
 static uint32_t g_last_draw = 0;
+static bool touchBegan = false;
 
 static uint16_t colorFor(BuddyState st) {
   switch (st) {
-    case BuddyState::Working: return 0x047F;     // blue
-    case BuddyState::Attention: return 0xFD20;   // orange
-    case BuddyState::Complete: return 0x07E0;    // green
-    case BuddyState::Error: return 0xF800;       // red
-    case BuddyState::Offline: return 0x8410;     // gray
+    case BuddyState::Working: return 0x047F;
+    case BuddyState::Attention: return 0xFD20;
+    case BuddyState::Complete: return 0x07E0;
+    case BuddyState::Error: return 0xF800;
+    case BuddyState::Offline: return 0x8410;
     default: return 0xC618;
   }
 }
@@ -53,7 +65,7 @@ static void drawCentered(const String &text, int y, uint16_t color, uint8_t size
   int16_t x1, y1;
   uint16_t w, h;
   gfx->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-  int x = (480 - (int)w) / 2;
+  int x = (PANEL_W - (int)w) / 2;
   gfx->setCursor(max(0, x), y);
   gfx->print(text);
 }
@@ -66,78 +78,146 @@ static void drawHero() {
   int elapsed = 0;
 
   if (!g_offline && !g_sessions.empty()) {
-    // Prefer attention/error
     size_t idx = 0;
-    for (size_t i = 0; i < g_sessions.size(); i++) {
-      if (g_sessions[i].state == BuddyState::Attention || g_sessions[i].state == BuddyState::Error) {
-        idx = i;
-        break;
+    if (g_focused_id.length()) {
+      for (size_t i = 0; i < g_sessions.size(); i++) {
+        if (g_sessions[i].session_id == g_focused_id) {
+          idx = i;
+          break;
+        }
+      }
+    } else {
+      for (size_t i = 0; i < g_sessions.size(); i++) {
+        if (g_sessions[i].state == BuddyState::Attention || g_sessions[i].state == BuddyState::Error) {
+          idx = i;
+          break;
+        }
       }
     }
+    g_focus_idx = idx;
     const auto &s = g_sessions[idx];
     st = s.state;
     project = s.project;
     message = s.message.length() ? s.message : stateLabel(st);
     sid = s.session_id;
     elapsed = s.elapsed_seconds;
+    g_can_act = s.can_act;
+  } else {
+    g_can_act = false;
   }
   g_focus = st;
+  g_pending_session = sid;
+  if (!gfx) return;
 
-  uint16_t bg = 0x0000;
   uint16_t accent = colorFor(st);
-  fillScreen(bg);
-  gfx->fillRect(0, 0, 480, 8, accent);
+  fillScreen(0x0000);
+  gfx->fillRoundRect(180, 36, 120, 6, 3, accent);
 
-  const char *title = g_offline ? "OFFLINE" : (st == BuddyState::Attention ? "NEEDS ATTENTION" : BUDDY_DEVICE_NAME);
-  drawCentered(title, 40, accent, 2);
+  const char *title = g_offline ? "OFFLINE" : (st == BuddyState::Attention ? "ATTENTION" : BUDDY_DEVICE_NAME);
+  drawCentered(title, 58, accent, 2);
 
-  // Big glyph
-  const char *glyph = "·";
-  if (st == BuddyState::Working) glyph = "●";
+  // Default GFX font is ASCII-only; keep these single-byte.
+  const char *glyph = ".";
+  if (st == BuddyState::Working) glyph = "o";
   else if (st == BuddyState::Attention) glyph = "!";
-  else if (st == BuddyState::Complete) glyph = "✓";
-  else if (st == BuddyState::Error) glyph = "✕";
-  else if (st == BuddyState::Offline) glyph = "○";
-  drawCentered(glyph, 140, accent, 6);
+  else if (st == BuddyState::Complete) glyph = "+";
+  else if (st == BuddyState::Error) glyph = "x";
+  else if (st == BuddyState::Offline) glyph = "o";
+  drawCentered(glyph, 118, accent, 5);
 
-  drawCentered(stateLabel(st), 230, 0xFFFF, 3);
+  drawCentered(stateLabel(st), 200, 0xFFFF, 3);
 
   if (project.length()) {
     char line[64];
-    snprintf(line, sizeof(line), "%s · %02d:%02d", project.c_str(), elapsed / 60, elapsed % 60);
-    drawCentered(line, 290, 0xC618, 2);
+    snprintf(line, sizeof(line), "%s  %02d:%02d", project.c_str(), elapsed / 60, elapsed % 60);
+    drawCentered(line, 252, 0xC618, 2);
   }
 
-  drawCentered(message, 340, 0x8410, 1);
+  if (message.length() > 36) message = message.substring(0, 33) + "...";
+  drawCentered(message, 292, 0x8410, 1);
+  if (g_sessions.size() > 1) {
+    char pager[16];
+    snprintf(pager, sizeof(pager), "%u / %u", (unsigned)(g_focus_idx + 1), (unsigned)g_sessions.size());
+    drawCentered(pager, 318, 0xC618, 1);
+  }
 
-  // Soft buttons regions (visual only; touch mapped in uiLoop)
-  gfx->fillRoundRect(40, 400, 180, 56, 12, g_muted ? 0x4208 : 0x2104);
-  gfx->fillRoundRect(260, 400, 180, 56, 12, 0x2104);
+  gfx->fillRoundRect(BTN_L_X, BTN_Y, BTN_W, BTN_H, 12, g_can_act ? 0x4000 : (g_muted ? 0x4208 : 0x2104));
+  gfx->fillRoundRect(BTN_R_X, BTN_Y, BTN_W, BTN_H, 12, g_can_act ? 0x0320 : 0x2104);
   gfx->setTextSize(2);
   gfx->setTextColor(0xFFFF);
-  gfx->setCursor(70, 418);
-  gfx->print(g_muted ? "UNMUTE" : "MUTE");
-  gfx->setCursor(290, 418);
-  gfx->print("DISMISS");
+  const char *leftLabel = g_can_act ? "CANCEL" : (g_muted ? "UNMUTE" : "MUTE");
+  const char *rightLabel = g_can_act ? "RUN" : "DISMISS";
+  int16_t x1, y1;
+  uint16_t tw, th;
+  gfx->getTextBounds(leftLabel, 0, 0, &x1, &y1, &tw, &th);
+  gfx->setCursor(BTN_L_X + (BTN_W - (int)tw) / 2, BTN_Y + 16);
+  gfx->print(leftLabel);
+  gfx->getTextBounds(rightLabel, 0, 0, &x1, &y1, &tw, &th);
+  gfx->setCursor(BTN_R_X + (BTN_W - (int)tw) / 2, BTN_Y + 16);
+  gfx->print(rightLabel);
+  if (disp) disp->flush();
+}
 
-  // stash dismiss target
-  g_pending_session = sid;
+static void touchReset() {
+  exioSet(EXIO_TP_RST, false);
+  delay(10);
+  exioSet(EXIO_TP_RST, true);
+  delay(50);
+  uint8_t no_sleep = 0xFF;
+  Wire.beginTransmission(CST820_ADDR);
+  Wire.write(0xFE);
+  Wire.write(no_sleep);
+  Wire.endTransmission();
+}
+
+static bool readTouch(int16_t &x, int16_t &y) {
+  if (digitalRead(CST820_INT_PIN) == HIGH) return false;
+  Wire.beginTransmission(CST820_ADDR);
+  Wire.write(0x01);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((uint8_t)CST820_ADDR, (uint8_t)6) < 6) return false;
+  Wire.read();  // gesture
+  uint8_t points = Wire.read();
+  uint8_t xh = Wire.read();
+  uint8_t xl = Wire.read();
+  uint8_t yh = Wire.read();
+  uint8_t yl = Wire.read();
+  if ((points & 0x0F) == 0) return false;
+  x = ((xh & 0x0F) << 8) | xl;
+  y = ((yh & 0x0F) << 8) | yl;
+  return x >= 0 && x < PANEL_W && y >= 0 && y < PANEL_H;
 }
 
 void uiBegin() {
-  pinMode(LCD_BL, OUTPUT);
-  digitalWrite(LCD_BL, HIGH);
+  pinMode(LCD_BL_PIN, OUTPUT);
+  digitalWrite(LCD_BL_PIN, HIGH);
+  pinMode(CST820_INT_PIN, INPUT_PULLUP);
 
-  // Generic SPI bus placeholder — replace with Waveshare RGB panel init if needed.
-  bus = new Arduino_ESP32SPI(2 /*DC*/, 15 /*CS*/, 14 /*SCK*/, 13 /*MOSI*/, GFX_NOT_DEFINED /*MISO*/, HSPI);
-  gfx = new Arduino_ST7789(bus, 1 /*RST*/, 0 /*rotation*/, true /*IPS*/, 480, 480);
-  if (!gfx->begin()) {
-    // Fallback: keep running for Serial/WS even if panel fails
-    Serial.println("[ui] display begin failed — using serial-only UI");
-  } else {
-    gfx->setRotation(0);
-    fillScreen(0x0000);
+  if (!st7701Init()) {
+    Serial.println("[ui] ST7701 init failed");
   }
+
+  rgb = new Arduino_ESP32RGBPanel(
+      RGB_DE, RGB_VSYNC, RGB_HSYNC, RGB_PCLK,
+      RGB_R1, RGB_R2, RGB_R3, RGB_R4, RGB_R5,
+      RGB_G0, RGB_G1, RGB_G2, RGB_G3, RGB_G4, RGB_G5,
+      RGB_B1, RGB_B2, RGB_B3, RGB_B4, RGB_B5,
+      1, 50, 8, 10,
+      1, 8, 3, 8,
+      0, 12 * 1000 * 1000, false, 0, 0);
+  disp = new Arduino_RGB_Display(PANEL_W, PANEL_H, rgb, 0, false);
+  gfx = disp;
+  if (!gfx->begin()) {
+    Serial.println("[ui] RGB panel begin failed");
+    delete disp;
+    disp = nullptr;
+    gfx = nullptr;
+  } else {
+    Serial.printf("[ui] RGB panel ready, PSRAM %u\n", ESP.getPsramSize());
+    gfx->setRotation(0);
+  }
+
+  touchReset();
   drawHero();
 }
 
@@ -148,22 +228,20 @@ void uiSetOffline(bool offline) {
   }
 }
 
-void uiApplySnapshot(const std::vector<BuddySession> &sessions, bool muted) {
+void uiApplySnapshot(const std::vector<BuddySession> &sessions, bool muted, const String &focused_id) {
   BuddyState prevFocus = g_focus;
-  bool prevMuted = g_muted;
   g_sessions = sessions;
+  g_focused_id = focused_id;
   g_muted = muted;
   buzzerSetMuted(muted);
   g_offline = false;
   drawHero();
 
-  // Chime on state transitions into attention/complete/error
   if (!muted && g_focus != prevFocus) {
     if (g_focus == BuddyState::Attention) buzzerAttention();
     else if (g_focus == BuddyState::Complete) buzzerComplete();
     else if (g_focus == BuddyState::Error) buzzerError();
   }
-  (void)prevMuted;
 }
 
 bool uiPollAck(String &session_id, String &action) {
@@ -174,58 +252,31 @@ bool uiPollAck(String &session_id, String &action) {
   return true;
 }
 
-// Simple capacitive touch stub: Waveshare CST816 on I2C.
-// If touch IC differs, replace readTouch() using Waveshare's Touch example.
-#include <Wire.h>
-#define TOUCH_SDA 11
-#define TOUCH_SCL 10
-#define TOUCH_ADDR 0x15
-
-static bool touchBegan = false;
-
-static bool readTouch(int16_t &x, int16_t &y) {
-  Wire.beginTransmission(TOUCH_ADDR);
-  Wire.write(0x02);
-  if (Wire.endTransmission(false) != 0) return false;
-  if (Wire.requestFrom((uint8_t)TOUCH_ADDR, (uint8_t)5) < 5) return false;
-  uint8_t points = Wire.read();
-  if ((points & 0x0F) == 0) return false;
-  uint8_t b1 = Wire.read();
-  uint8_t b2 = Wire.read();
-  uint8_t b3 = Wire.read();
-  uint8_t b4 = Wire.read();
-  x = ((b1 & 0x0F) << 8) | b2;
-  y = ((b3 & 0x0F) << 8) | b4;
-  return true;
-}
-
 void uiLoop() {
-  static bool wireReady = false;
-  if (!wireReady) {
-    Wire.begin(TOUCH_SDA, TOUCH_SCL);
-    wireReady = true;
-  }
-
   int16_t x, y;
   if (readTouch(x, y)) {
     if (!touchBegan) {
       touchBegan = true;
-      if (y >= 400 && y <= 460) {
-        if (x >= 40 && x <= 220) {
-          g_pending_action = g_muted ? "unmute" : "mute";
-          g_pending_session = "";
+      if (y >= BTN_Y && y <= BTN_Y + BTN_H) {
+        if (x >= BTN_L_X && x <= BTN_L_X + BTN_W) {
+          g_pending_action = g_can_act ? "cancel" : (g_muted ? "unmute" : "mute");
+          if (!g_can_act) g_pending_session = "";
           g_has_pending = true;
-        } else if (x >= 260 && x <= 440) {
-          g_pending_action = "dismiss";
+        } else if (x >= BTN_R_X && x <= BTN_R_X + BTN_W) {
+          g_pending_action = g_can_act ? "run" : "dismiss";
           g_has_pending = true;
         }
+      } else if (!g_sessions.empty() && y < BTN_Y) {
+        size_t next = (g_focus_idx + 1) % g_sessions.size();
+        g_pending_action = "focus";
+        g_pending_session = g_sessions[next].session_id;
+        g_has_pending = true;
       }
     }
   } else {
     touchBegan = false;
   }
 
-  // Refresh elapsed clock occasionally
   if (millis() - g_last_draw > 5000) {
     g_last_draw = millis();
     if (!g_offline) drawHero();
