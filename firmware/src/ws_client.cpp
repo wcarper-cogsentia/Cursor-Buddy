@@ -60,6 +60,17 @@ void buddyWsBegin(SnapshotHandler onSnapshot, ConnHandler onConn) {
 
 void buddyWsLoop() { webSocket.loop(); }
 
+void buddyWsSuspend() {
+  webSocket.disconnect();
+  g_connected = false;
+}
+
+void buddyWsResume() {
+  webSocket.begin(BUDDY_HOST, BUDDY_WS_PORT, BUDDY_WS_PATH);
+  webSocket.onEvent(onWsEvent);
+  webSocket.setReconnectInterval(3000);
+}
+
 bool buddyWsConnected() { return g_connected; }
 
 void buddyWsSendAck(const String &session_id, const String &action) {

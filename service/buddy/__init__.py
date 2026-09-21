@@ -1,3 +1,3 @@
-"""Cursor Buddy Mac service."""
+"""Cursor Buddy desktop service."""
 
 __version__ = "0.1.0"

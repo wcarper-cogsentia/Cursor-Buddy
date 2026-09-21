@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from buddy.state import BuddyState, request_summary
 
 
@@ -19,6 +21,48 @@ def test_working_to_complete():
     assert s.sessions["abc"].state == "complete"
     snap = s.snapshot()
     assert snap["sessions"][0]["project"] == "SCOT"
+
+
+def test_stale_working_becomes_attention():
+    s = BuddyState()
+    s.apply_hook(
+        {"hook_event_name": "preToolUse", "conversation_id": "abc", "tool_name": "Read"},
+        "SCOT",
+    )
+    assert s.sessions["abc"].state == "working"
+    s.sessions["abc"].updated_at = datetime.now(timezone.utc) - timedelta(seconds=45)
+    assert s.promote_stale_working(30) == ["abc"]
+    assert s.sessions["abc"].state == "attention"
+    assert s.sessions["abc"].message == "Might need you"
+    assert s.promote_stale_working(30) == []
+
+
+def test_fresh_working_is_not_promoted():
+    s = BuddyState()
+    s.apply_hook(
+        {"hook_event_name": "preToolUse", "conversation_id": "abc", "tool_name": "Read"},
+        "SCOT",
+    )
+    assert s.promote_stale_working(30) == []
+    assert s.sessions["abc"].state == "working"
+
+
+def test_ask_question_is_attention():
+    s = BuddyState()
+    s.apply_hook(
+        {
+            "hook_event_name": "preToolUse",
+            "conversation_id": "scot",
+            "tool_name": "AskQuestion",
+            "tool_input": {
+                "title": "Question",
+                "questions": [{"id": "q1", "prompt": "What should learners see?"}],
+            },
+        },
+        "SCOT",
+    )
+    assert s.sessions["scot"].state == "attention"
+    assert "learners" in s.sessions["scot"].message
 
 
 def test_permission_denied_attention():
@@ -58,13 +102,30 @@ def test_focus_is_shared_and_attention_steals():
     s = BuddyState()
     s.set_state("scot", project="SCOT", state="working", message="run")
     s.set_state("aiden", project="Aiden", state="complete", message="done")
-    assert s.snapshot()["focused_session_id"] == "scot"
-    s.focus("aiden")
     assert s.snapshot()["focused_session_id"] == "aiden"
+    s.focus("scot")
+    assert s.snapshot()["focused_session_id"] == "scot"
     s.set_state("scot", project="SCOT", state="attention", message="Waiting for approval")
+    assert s.snapshot()["focused_session_id"] == "scot"
+    s.set_state("aiden", project="Aiden", state="error", message="boom")
     assert s.snapshot()["focused_session_id"] == "scot"
     s.dismiss("scot")
     assert s.snapshot()["focused_session_id"] == "aiden"
+
+
+def test_alert_focus_prefers_more_urgent():
+    s = BuddyState()
+    s.set_state("b", project="B", state="complete", message="done")
+    s.set_state("c", project="C", state="error", message="boom")
+    assert s.snapshot()["focused_session_id"] == "c"
+    s.set_state("d", project="D", state="attention", message="wait")
+    assert s.snapshot()["focused_session_id"] == "d"
+    s.set_state("e", project="E", state="complete", message="later")
+    assert s.snapshot()["focused_session_id"] == "d"
+    s.set_state("f", project="F", state="attention", message="newer")
+    assert s.snapshot()["focused_session_id"] == "f"
+    s.set_state("g", project="G", state="working", message="run")
+    assert s.snapshot()["focused_session_id"] == "f"
 
 
 def test_mcp_navigate_is_working_not_attention():

@@ -11,6 +11,9 @@ from typing import Any, Callable, Literal
 
 SessionState = Literal["idle", "working", "attention", "complete", "error"]
 
+# Lower rank wins the hero when several alert events overlap.
+_ALERT_RANK = {"attention": 0, "error": 1, "complete": 2}
+
 _UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -23,14 +26,26 @@ def _clip(text: str, n: int = 80) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def request_summary(payload: dict[str, Any]) -> str:
-    """Human-readable request for attention / approval screens."""
-    tool = str(
+_QUESTION_TOOLS = {"askquestion", "askuserquestion"}
+
+
+def tool_name(payload: dict[str, Any]) -> str:
+    return str(
         payload.get("tool_name")
         or payload.get("tool")
         or payload.get("mcp_tool_name")
         or ""
     )
+
+
+def is_question_tool(payload: dict[str, Any]) -> bool:
+    name = tool_name(payload).replace("MCP:", "").replace("mcp_", "").lower()
+    return name in _QUESTION_TOOLS
+
+
+def request_summary(payload: dict[str, Any]) -> str:
+    """Human-readable request for attention / approval screens."""
+    tool = tool_name(payload)
     raw_input = payload.get("tool_input") or payload.get("input") or payload.get("arguments") or {}
     if not isinstance(raw_input, dict):
         raw_input = {}
@@ -38,6 +53,14 @@ def request_summary(payload: dict[str, Any]) -> str:
     url = str(raw_input.get("url") or payload.get("url") or "")
     path = str(raw_input.get("file_path") or raw_input.get("path") or "")
     label = tool.replace("MCP:", "").replace("mcp_", "")
+    questions = raw_input.get("questions")
+    if isinstance(questions, list) and questions and isinstance(questions[0], dict):
+        prompt = str(questions[0].get("prompt") or questions[0].get("title") or "")
+        if prompt:
+            return _clip(f"Question: {prompt}")
+    if is_question_tool(payload):
+        title = str(raw_input.get("title") or "")
+        return _clip(title or "Waiting for your answer")
     if url:
         return _clip(f"{label or 'Open'} {url}")
     if command:
@@ -111,6 +134,20 @@ class BuddyState:
             key=lambda s: (order.get(s.state, 9), -s.updated_at.timestamp()),
         )
 
+    def _note_alert(self, session_id: str, state: SessionState) -> None:
+        """Point the shared hero at an alert unless a more urgent one already holds it."""
+        incoming = _ALERT_RANK.get(state)
+        if incoming is None:
+            if not self.focused_session_id:
+                self.focused_session_id = session_id
+            return
+        current = self.sessions.get(self.focused_session_id)
+        if current is not None and current.session_id != session_id:
+            held = _ALERT_RANK.get(current.state)
+            if held is not None and held < incoming:
+                return
+        self.focused_session_id = session_id
+
     def _resolved_focus(self, sessions: list[Session] | None = None) -> str:
         items = sessions if sessions is not None else self.active_sessions()
         ids = {s.session_id for s in items}
@@ -157,11 +194,27 @@ class BuddyState:
         else:
             sess.working_since = None
         sess.can_act = False
-        if state in ("attention", "error"):
-            self.focused_session_id = session_id
-        elif not self.focused_session_id:
-            self.focused_session_id = session_id
+        self._note_alert(session_id, state)
         self._notify()
+
+    def promote_stale_working(self, max_age_seconds: float) -> list[str]:
+        """WORKING with no hooks for a while → ATTENTION + beep (might need you)."""
+        now = datetime.now(timezone.utc)
+        promoted: list[str] = []
+        for sess in list(self.sessions.values()):
+            if sess.state != "working":
+                continue
+            age = (now - sess.updated_at).total_seconds()
+            if age < max_age_seconds:
+                continue
+            self.set_state(
+                sess.session_id,
+                project=sess.project,
+                state="attention",
+                message="Might need you",
+            )
+            promoted.append(sess.session_id)
+        return promoted
 
     def focus(self, session_id: str) -> None:
         if session_id in self.sessions and self.sessions[session_id].state != "idle":
@@ -179,7 +232,7 @@ class BuddyState:
         sess.can_act = True
         sess.updated_at = datetime.now(timezone.utc)
         sess.working_since = None
-        self.focused_session_id = session_id
+        self._note_alert(session_id, "attention")
         self._waiters[session_id] = threading.Event()
         self._decisions.pop(session_id, None)
         self._notify()
@@ -290,6 +343,15 @@ class BuddyState:
 
         if event == "beforeMCPExecution" and payload.get("_buddy_gate"):
             self.begin_gate(session_id, project, request_summary(payload) or "Waiting for approval")
+            return
+
+        if event in ("preToolUse", "postToolUse") and is_question_tool(payload):
+            self.set_state(
+                session_id,
+                project=project,
+                state="attention",
+                message=request_summary(payload) or "Waiting for your answer",
+            )
             return
 
         if event in (

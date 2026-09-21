@@ -1,4 +1,4 @@
-"""Buddy Mac service: localhost ingest + LAN WebSocket snapshot broadcast."""
+"""Buddy desktop service: localhost ingest + LAN WebSocket snapshot broadcast."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -14,6 +15,8 @@ from pathlib import Path
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
+from buddy.cursor_signals import watch_question_signals, watch_stale_working
+from buddy.paths import buddy_log_file, cursor_log_root
 from buddy.project import project_from_hook_env_and_payload
 from buddy.state import BuddyState
 
@@ -24,6 +27,7 @@ logger = logging.getLogger("cursor-buddy")
 INGEST_HOST = os.environ.get("BUDDY_INGEST_HOST", "127.0.0.1")
 PUBLIC_HOST = os.environ.get("BUDDY_HOST", "0.0.0.0")
 PORT = int(os.environ.get("BUDDY_PORT", "8787"))
+STALE_WORKING_SEC = float(os.environ.get("BUDDY_STALE_WORKING_SEC", "30"))
 
 state = BuddyState()
 _clients: set[WebSocket] = set()
@@ -57,14 +61,28 @@ def _schedule_broadcast() -> None:
 state.on_change(_schedule_broadcast)
 
 
+def _apply_payload(payload: dict[str, Any]) -> None:
+    state.apply_hook(payload, _project_for(payload))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _loop
     _loop = asyncio.get_running_loop()
     logger.info("Buddy listening ingest+ws on %s:%s (bind %s)", PUBLIC_HOST, PORT, PUBLIC_HOST)
     logger.info("Local receiver: http://127.0.0.1:%s/", PORT)
-    yield
-    _clients.clear()
+    logger.info("Platform %s; hook log %s", sys.platform, buddy_log_file())
+    logger.info("Stale working → attention after %.0fs", STALE_WORKING_SEC)
+    watch_task = asyncio.create_task(watch_question_signals(_apply_payload))
+    stale_task = asyncio.create_task(
+        watch_stale_working(state.promote_stale_working, STALE_WORKING_SEC)
+    )
+    try:
+        yield
+    finally:
+        watch_task.cancel()
+        stale_task.cancel()
+        _clients.clear()
 
 
 app = FastAPI(title="Cursor Buddy", version="0.1.0", lifespan=lifespan)
@@ -77,7 +95,14 @@ async def receiver() -> FileResponse:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, "sessions": len(state.snapshot()["sessions"]), "muted": state.muted}
+    return {
+        "ok": True,
+        "platform": sys.platform,
+        "sessions": len(state.snapshot()["sessions"]),
+        "muted": state.muted,
+        "cursor_log_root": str(cursor_log_root()),
+        "hook_log": str(buddy_log_file()),
+    }
 
 
 @app.get("/snapshot")

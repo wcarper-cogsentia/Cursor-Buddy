@@ -158,3 +158,13 @@ bool st7701Init() {
   Serial.println("[st7701] command init done");
   return true;
 }
+
+void st7701SleepIn() {
+  exioSet(EXIO_LCD_CS, false);
+  delay(10);
+  cmd(0x28);
+  delay(20);
+  cmd(0x10);
+  delay(120);
+  exioSet(EXIO_LCD_CS, true);
+}

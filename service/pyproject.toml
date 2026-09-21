@@ -1,7 +1,7 @@
 [project]
 name = "cursor-buddy"
 version = "0.1.0"
-description = "Mac Buddy Service for Cursor Buddy (Waveshare ESP32 pager)"
+description = "Desktop Buddy service for Cursor Buddy (Waveshare ESP32 pager)"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115.0",

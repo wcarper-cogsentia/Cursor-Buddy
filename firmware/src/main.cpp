@@ -5,6 +5,7 @@
 #include "buzzer.h"
 #include "ui.h"
 #include "ws_client.h"
+#include "power.h"
 
 static void onSnapshot(const std::vector<BuddySession> &sessions, bool muted, const String &focused_id) {
   uiApplySnapshot(sessions, muted, focused_id);
@@ -43,6 +44,42 @@ void setup() {
   }
 
   buddyWsBegin(onSnapshot, onConn);
+  powerBegin();
+  uiArmSwitches();
+}
+
+static void suspendRadio() {
+  buddyWsSuspend();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  btStop();
+  delay(50);
+}
+
+static void resumeRadio() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(BUDDY_WIFI_SSID, BUDDY_WIFI_PASSWORD);
+  buddyWsResume();
+  uiSetOffline(true);
+}
+
+static void maybeBatterySleep() {
+  static uint32_t not_before = 0;
+  if (millis() < not_before) return;
+  if (uiIdleMs() < BUDDY_BATTERY_IDLE_MS) return;
+  if (!powerIsDischarging()) return;
+
+  uint32_t started = millis();
+  if (!uiQuiesceForSleep()) {
+    not_before = millis() + 15000;
+    return;
+  }
+  suspendRadio();
+  bool slept = powerLightSleep();
+  resumeRadio();
+  uiRestoreAfterSleep();
+  // A stuck wake pin returns immediately and would strobe the backlight.
+  if (!slept || millis() - started < 1000) not_before = millis() + 15000;
 }
 
 void loop() {
@@ -61,4 +98,7 @@ void loop() {
     buddyWsSendAck(sid, action);
     Serial.printf("[ui] ack %s %s\n", action.c_str(), sid.c_str());
   }
+
+  powerSample();
+  maybeBatterySleep();
 }

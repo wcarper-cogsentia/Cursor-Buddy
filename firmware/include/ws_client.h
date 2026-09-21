@@ -8,5 +8,7 @@ using ConnHandler = void (*)(bool connected);
 
 void buddyWsBegin(SnapshotHandler onSnapshot, ConnHandler onConn);
 void buddyWsLoop();
+void buddyWsSuspend();
+void buddyWsResume();
 void buddyWsSendAck(const String &session_id, const String &action);
 bool buddyWsConnected();

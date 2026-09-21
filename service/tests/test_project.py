@@ -7,3 +7,7 @@ def test_scot_platform():
 
 def test_plain_name():
     assert project_label_from_path("/tmp/Aiden") == "Aiden"
+
+
+def test_windows_path():
+    assert project_label_from_path(r"C:\Users\walt\SCOT-platform\\") == "SCOT"

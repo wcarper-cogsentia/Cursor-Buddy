@@ -48,11 +48,13 @@ Sent on connect and whenever session state or mute changes.
 | Action | Effect |
 |--------|--------|
 | `dismiss` | Remove session from active list (or mark dismissed) |
-| `focus` | Pin this session as the hero on web and device |
+| `focus` | Pin this session as the hero on the web dashboard |
 | `run` | Allow the waiting Cursor hook (`beforeMCPExecution`) |
 | `cancel` | Deny the waiting Cursor hook |
 | `mute` | Global mute on |
 | `unmute` | Global mute off |
+
+The device pages locally. `<` and `>` switch conversations on the panel and do not send `focus`. When a session enters `attention`, `error`, or `complete`, the panel shows that conversation, unless it is already showing a more urgent alert (`attention`, then `error`, then `complete`). `focused_session_id` follows the same urgency rule for the web hero. Working updates leave both where they are.
 
 ## Ingest (localhost only)
 

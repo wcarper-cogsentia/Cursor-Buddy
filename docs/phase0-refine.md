@@ -3,8 +3,13 @@
 After installing hooks and using Cursor for a few real agent sessions, inspect:
 
 ```bash
+# macOS
 tail -n 50 ~/Library/Logs/cursor-buddy/hooks.jsonl | python3 -m json.tool
+# Linux
+tail -n 50 "${XDG_STATE_HOME:-$HOME/.local/state}/cursor-buddy/hooks.jsonl" | python3 -m json.tool
 ```
+
+On Windows the same file is `%LOCALAPPDATA%\cursor-buddy\hooks.jsonl`. `GET /health` prints the resolved `hook_log` path.
 
 ## What to look for
 

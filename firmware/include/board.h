@@ -44,3 +44,13 @@
 
 #define PANEL_W 480
 #define PANEL_H 480
+
+// Battery divider on GPIO4: 200k (BAT) / 100k (GND), so pack voltage is 3× the ADC pin.
+#define BAT_ADC_PIN 4
+
+// 12-pin header switches: normally open to GND, active low, internal pull-up.
+// Pin 3 D- = mute/unmute, pin 4 D+ = dismiss, pin 9 TXD = previous, pin 10 RXD = next.
+#define SW_MUTE_PIN 19
+#define SW_DISMISS_PIN 20
+#define SW_PREV_PIN 43
+#define SW_NEXT_PIN 44

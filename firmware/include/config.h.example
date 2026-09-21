@@ -4,10 +4,13 @@
 #define BUDDY_WIFI_SSID     "YOUR_SSID"
 #define BUDDY_WIFI_PASSWORD "YOUR_PASSWORD"
 
-// Mac running Buddy service (LAN IP), e.g. 192.168.1.42
+// Computer running the Buddy service (LAN IP), e.g. 192.168.1.42
 #define BUDDY_HOST          "192.168.1.42"
 #define BUDDY_WS_PORT       8787
 #define BUDDY_WS_PATH       "/ws"
 
 // Optional device name shown on idle screen
 #define BUDDY_DEVICE_NAME   "CURSOR BUDDY"
+
+// Optional. Idle time on battery before the screen sleeps. Default is 30 minutes.
+// #define BUDDY_BATTERY_IDLE_MS (30UL * 60UL * 1000UL)

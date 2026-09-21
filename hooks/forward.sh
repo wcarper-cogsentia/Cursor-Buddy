@@ -1,14 +1,22 @@
 #!/bin/sh
-# Observational Buddy hook: print {} and exit immediately.
-# Log + HTTP ingest run detached so Cursor agents are not stalled.
+# Unix fast path for observational hooks. The installer uses hooks/forward.py,
+# which is the cross-platform forwarder. This wrapper remains for manual use.
 set -eu
 
 INGEST="${BUDDY_INGEST_URL:-http://127.0.0.1:8787/ingest}"
-LOG_DIR="${HOME}/Library/Logs/cursor-buddy"
+
+case "$(uname -s)" in
+  Darwin)
+    LOG_DIR="${BUDDY_LOG_DIR:-${HOME}/Library/Logs/cursor-buddy}"
+    ;;
+  *)
+    LOG_DIR="${BUDDY_LOG_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/cursor-buddy}"
+    ;;
+esac
 LOG_FILE="${LOG_DIR}/hooks.jsonl"
 
 payload=$(cat)
-tmp=$(mktemp -t buddy-hook)
+tmp=$(mktemp "${TMPDIR:-/tmp}/buddy-hook.XXXXXX")
 printf '%s' "$payload" > "$tmp"
 
 nohup /bin/sh -c '

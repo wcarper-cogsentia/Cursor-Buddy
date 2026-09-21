@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 
 def project_label_from_path(path: str | None) -> str:
     if not path:
         return "Cursor"
-    p = Path(path.rstrip("/")).expanduser()
-    name = p.name or "Cursor"
+    # Accept both separators so a Windows workspace root still labels correctly
+    # when this runs on another OS (and the reverse).
+    normalized = os.path.expanduser(path.strip()).replace("\\", "/").rstrip("/")
+    name = normalized.split("/")[-1] or "Cursor"
     # Common: "SCOT-platform" → "SCOT"
     if name.lower().endswith("-platform"):
         name = name[: -len("-platform")]
