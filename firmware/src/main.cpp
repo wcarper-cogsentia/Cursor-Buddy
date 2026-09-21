@@ -4,6 +4,7 @@
 #include "exio.h"
 #include "buzzer.h"
 #include "ui.h"
+#include "ambient.h"
 #include "ws_client.h"
 #include "power.h"
 
@@ -43,6 +44,7 @@ void setup() {
     Serial.println("WiFi failed — will keep retrying via WS reconnect after connect");
   }
 
+  ambientBegin();
   buddyWsBegin(onSnapshot, onConn);
   powerBegin();
   uiArmSwitches();
@@ -69,8 +71,13 @@ static void maybeBatterySleep() {
   if (uiIdleMs() < BUDDY_BATTERY_IDLE_MS) return;
   if (!powerIsDischarging()) return;
 
+  if (!ambientQuiesce()) {
+    not_before = millis() + 15000;
+    return;
+  }
   uint32_t started = millis();
   if (!uiQuiesceForSleep()) {
+    ambientResume();
     not_before = millis() + 15000;
     return;
   }
@@ -78,6 +85,7 @@ static void maybeBatterySleep() {
   bool slept = powerLightSleep();
   resumeRadio();
   uiRestoreAfterSleep();
+  ambientResume();
   // A stuck wake pin returns immediately and would strobe the backlight.
   if (!slept || millis() - started < 1000) not_before = millis() + 15000;
 }

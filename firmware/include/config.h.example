@@ -9,8 +9,24 @@
 #define BUDDY_WS_PORT       8787
 #define BUDDY_WS_PATH       "/ws"
 
-// Optional device name shown on idle screen
+// Optional device name shown on the agent screen
 #define BUDDY_DEVICE_NAME   "CURSOR BUDDY"
+
+// Idle face (no active Cursor sessions): local time and weather.
+// The puck needs outbound internet for NTP and the forecast.
+// POSIX timezone. Leave unset to use the offset from the location lookup.
+// US Mountain Time:
+// #define BUDDY_TZ "MST7MDT,M3.2.0,M11.1.0"
+
+// Decimal degrees. Leave unset to place the puck from its public IP.
+// #define BUDDY_LATITUDE 39.7392
+// #define BUDDY_LONGITUDE -104.9903
+
+// Celsius. Default is Fahrenheit in the US, and when the country is unknown.
+// #define BUDDY_TEMP_C 1
+
+// 24-hour clock. Default is 12-hour with AM/PM.
+// #define BUDDY_24H 1
 
 // Optional. Idle time on battery before the screen sleeps. Default is 30 minutes.
 // #define BUDDY_BATTERY_IDLE_MS (30UL * 60UL * 1000UL)

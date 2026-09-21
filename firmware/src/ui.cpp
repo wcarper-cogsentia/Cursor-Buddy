@@ -10,8 +10,10 @@
 #include <esp_lcd_panel_ops.h>
 #include <stdint.h>
 #include "ui.h"
+#include "ambient.h"
 #include "buzzer.h"
 #include "board.h"
+#include "config.h"
 #include "exio.h"
 #include "st7701.h"
 
@@ -119,7 +121,291 @@ static void drawChevron(int x, const char *label) {
   gfx->print(label);
 }
 
+static const int CLK_DATE_Y = 118;
+static const int CLK_TIME_Y = 168;
+static const int CLK_TIME_SIZE = 8;
+static const int CLK_TEMP_Y = 256;
+static const int CLK_COND_Y = 320;
+static const int CLK_RANGE_Y = 354;
+static const int CLK_STATUS_Y = 392;
+static const int CLK_ICON_W = 56;
+
+static const char *kDow[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+static const char *kMonName[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                 "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+
+static bool g_clock_face = false;
+static int g_shown_min = -1;
+static int g_shown_hour = -1;
+static int g_shown_mday = -1;
+static int g_shown_colon = -1;
+static int g_shown_wstate = -1;
+static int g_shown_temp = 0;
+static int g_shown_code = -2;
+static int g_shown_lo = 0;
+static int g_shown_hi = 0;
+static bool g_shown_range = false;
+static char g_shown_unit = 0;
+static char g_shown_sum[24] = "";
+static int g_shown_status = -1;
+
+static int clockX() { return (PANEL_W - 5 * 6 * CLK_TIME_SIZE) / 2; }
+
+static void formatClock(const AmbientClock &c, char out[6], const char **ampm) {
+#if defined(BUDDY_24H) && BUDDY_24H
+  snprintf(out, 6, "%02d:%02d", c.hour, c.minute);
+  *ampm = nullptr;
+#else
+  int h = c.hour % 12;
+  if (h == 0) h = 12;
+  snprintf(out, 6, "%2d:%02d", h, c.minute);
+  *ampm = c.hour < 12 ? "AM" : "PM";
+#endif
+}
+
+static void drawTimeDigits(const char *hhmm) {
+  gfx->setTextSize(CLK_TIME_SIZE);
+  gfx->setTextColor(0xFFFF, 0x0000);
+  gfx->setCursor(clockX(), CLK_TIME_Y);
+  gfx->print(hhmm);
+}
+
+static void drawColon(bool on) {
+  gfx->setTextSize(CLK_TIME_SIZE);
+  gfx->setTextColor(0xFFFF, 0x0000);
+  gfx->setCursor(clockX() + 2 * 6 * CLK_TIME_SIZE, CLK_TIME_Y);
+  gfx->print(on ? ":" : " ");
+}
+
+static void drawAmPm(const char *ampm) {
+  gfx->setTextSize(3);
+  gfx->setTextColor(0xC618, 0x0000);
+  gfx->setCursor(clockX() + 5 * 6 * CLK_TIME_SIZE + 14, CLK_TIME_Y + 40);
+  gfx->print(ampm);
+}
+
+static void drawDateLine(const AmbientClock &c) {
+  char line[12];
+  snprintf(line, sizeof(line), "%s %s %02d", kDow[c.wday], kMonName[c.mon], c.mday);
+  const int size = 3;
+  int x = (PANEL_W - 10 * 6 * size) / 2;
+  gfx->setTextSize(size);
+  gfx->setTextColor(0xC618, 0x0000);
+  gfx->setCursor(x, CLK_DATE_Y);
+  gfx->print(line);
+}
+
+static uint16_t weatherAccent(int code) {
+  if (code == 0 || code == 1 || code == 2) return 0xFE60;
+  if (code >= 95) return 0xFD20;
+  if ((code >= 71 && code <= 77) || code == 85 || code == 86) return 0xFFFF;
+  if (code >= 51) return 0x047F;
+  return 0xC618;
+}
+
+static void drawSun(int cx, int cy, int r, uint16_t color) {
+  gfx->fillCircle(cx, cy, r, color);
+  static const int8_t kDir[8][2] = {{1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1}};
+  for (int i = 0; i < 8; i++) {
+    int dx = kDir[i][0];
+    int dy = kDir[i][1];
+    int inner = r + 3;
+    int outer = r + (dx && dy ? 7 : 9);
+    gfx->drawLine(cx + dx * inner, cy + dy * inner, cx + dx * outer, cy + dy * outer, color);
+    if (dx == 0) gfx->drawLine(cx + 1, cy + dy * inner, cx + 1, cy + dy * outer, color);
+    else if (dy == 0) gfx->drawLine(cx + dx * inner, cy + 1, cx + dx * outer, cy + 1, color);
+  }
+}
+
+static void drawCloud(int x, int y, uint16_t color) {
+  gfx->fillCircle(x + 12, y + 16, 10, color);
+  gfx->fillCircle(x + 26, y + 10, 13, color);
+  gfx->fillCircle(x + 40, y + 16, 9, color);
+  gfx->fillRoundRect(x + 6, y + 16, 40, 14, 7, color);
+}
+
+static void drawFlake(int x, int y, uint16_t color) {
+  gfx->drawLine(x - 4, y, x + 4, y, color);
+  gfx->drawLine(x, y - 4, x, y + 4, color);
+  gfx->drawLine(x - 3, y - 3, x + 3, y + 3, color);
+  gfx->drawLine(x - 3, y + 3, x + 3, y - 3, color);
+}
+
+static void drawBolt(int x, int y, uint16_t color) {
+  gfx->fillTriangle(x + 8, y, x, y + 14, x + 9, y + 12, color);
+  gfx->fillTriangle(x + 4, y + 10, x + 14, y + 10, x + 5, y + 26, color);
+}
+
+static void drawWeatherIcon(int x, int y, int code) {
+  const uint16_t cloud = 0xE71C;
+  uint16_t accent = weatherAccent(code);
+  if (code == 0) {
+    drawSun(x + 28, y + 24, 10, accent);
+  } else if (code == 1) {
+    drawSun(x + 20, y + 18, 10, accent);
+    gfx->fillCircle(x + 38, y + 30, 8, cloud);
+    gfx->fillCircle(x + 48, y + 32, 6, cloud);
+    gfx->fillRoundRect(x + 32, y + 32, 22, 8, 4, cloud);
+  } else if (code == 2) {
+    drawSun(x + 16, y + 14, 8, accent);
+    drawCloud(x + 6, y + 14, cloud);
+  } else if (code == 45 || code == 48) {
+    gfx->fillRoundRect(x + 4, y + 10, 48, 5, 2, 0xC618);
+    gfx->fillRoundRect(x + 10, y + 22, 42, 5, 2, 0x8410);
+    gfx->fillRoundRect(x + 6, y + 34, 46, 5, 2, 0xC618);
+  } else if ((code >= 71 && code <= 77) || code == 85 || code == 86) {
+    drawCloud(x + 2, y + 2, cloud);
+    for (int i = 0; i < 3; i++) drawFlake(x + 16 + i * 12, y + 40, 0xFFFF);
+  } else if (code >= 95) {
+    drawCloud(x + 2, y, cloud);
+    drawBolt(x + 20, y + 26, accent);
+  } else if (code >= 51) {
+    drawCloud(x + 2, y + 2, cloud);
+    for (int i = 0; i < 3; i++) {
+      int dx = x + 16 + i * 12;
+      int dy = y + 32;
+      gfx->fillTriangle(dx, dy, dx - 6, dy + 12, dx + 2, dy + 12, accent);
+    }
+  } else {
+    drawCloud(x + 2, y + 8, cloud);
+  }
+}
+
+static void drawWeatherBlock(const AmbientClock &c) {
+  uint16_t accent = weatherAccent(c.code);
+  char num[8];
+  snprintf(num, sizeof(num), "%d", c.temp);
+  gfx->setTextSize(6);
+  int16_t x1, y1;
+  uint16_t tw, th;
+  gfx->getTextBounds(num, 0, 0, &x1, &y1, &tw, &th);
+  const int unitW = 6 * 3;
+  int total = CLK_ICON_W + 14 + (int)tw + 8 + unitW;
+  int x = (PANEL_W - total) / 2;
+  drawWeatherIcon(x, CLK_TEMP_Y - 4, c.code);
+  gfx->setTextSize(6);
+  gfx->setTextColor(accent);
+  gfx->setCursor(x + CLK_ICON_W + 14, CLK_TEMP_Y);
+  gfx->print(num);
+  gfx->setTextSize(3);
+  gfx->setCursor(x + CLK_ICON_W + 14 + (int)tw + 8, CLK_TEMP_Y + 24);
+  gfx->print(c.unit ? c.unit : 'F');
+  if (c.summary[0]) drawCentered(c.summary, CLK_COND_Y, 0xC618, 3);
+  if (c.has_range) {
+    char range[16];
+    snprintf(range, sizeof(range), "%d / %d", c.temp_lo, c.temp_hi);
+    drawCentered(range, CLK_RANGE_Y, accent, 2);
+  }
+}
+
+static bool paintClock(const AmbientClock &c) {
+  if (!c.valid) {
+    if (g_shown_min == -2) return false;
+    gfx->fillRect(60, 110, 360, 130, 0x0000);
+    drawTimeDigits("--:--");
+    g_shown_min = -2;
+    g_shown_hour = -1;
+    g_shown_colon = -1;
+    return true;
+  }
+  if (c.wday < 0 || c.wday > 6 || c.mon < 0 || c.mon > 11) return false;
+
+  char hhmm[6];
+  const char *ampm = nullptr;
+  formatClock(c, hhmm, &ampm);
+  bool colonOn = (c.second % 2) == 0;
+  if (!colonOn && hhmm[2] == ':') hhmm[2] = ' ';
+
+  if (g_shown_min != c.minute || g_shown_hour != c.hour || g_shown_mday != c.mday) {
+    drawDateLine(c);
+    drawTimeDigits(hhmm);
+    if (ampm) drawAmPm(ampm);
+    g_shown_min = c.minute;
+    g_shown_hour = c.hour;
+    g_shown_mday = c.mday;
+    g_shown_colon = colonOn ? 1 : 0;
+    return true;
+  }
+  if (g_shown_colon != (colonOn ? 1 : 0)) {
+    drawColon(colonOn);
+    g_shown_colon = colonOn ? 1 : 0;
+    return true;
+  }
+  return false;
+}
+
+static bool paintWeather(const AmbientClock &c) {
+  int state = c.weather_valid ? 1 : (c.weather_failed ? 2 : 0);
+  if (state == 0 && g_shown_wstate == 0) return false;
+  if (state == 2 && g_shown_wstate == 2) return false;
+  if (state == 1 && g_shown_wstate == 1 && c.temp == g_shown_temp && c.unit == g_shown_unit &&
+      c.code == g_shown_code && c.has_range == g_shown_range && c.temp_lo == g_shown_lo &&
+      c.temp_hi == g_shown_hi && strcmp(c.summary, g_shown_sum) == 0) {
+    return false;
+  }
+
+  gfx->fillRect(16, 240, 448, 136, 0x0000);
+  if (state == 1) {
+    drawWeatherBlock(c);
+    g_shown_temp = c.temp;
+    g_shown_code = c.code;
+    g_shown_lo = c.temp_lo;
+    g_shown_hi = c.temp_hi;
+    g_shown_range = c.has_range;
+    g_shown_unit = c.unit;
+    strncpy(g_shown_sum, c.summary, sizeof(g_shown_sum) - 1);
+    g_shown_sum[sizeof(g_shown_sum) - 1] = '\0';
+  } else if (state == 2) {
+    drawCentered("Weather unavailable", CLK_TEMP_Y + 16, 0x8410, 2);
+  }
+  g_shown_wstate = state;
+  return true;
+}
+
+static bool paintIdleStatus() {
+  int state = g_offline ? 2 : (g_muted ? 1 : 0);
+  if (state == g_shown_status) return false;
+  gfx->fillRect(80, CLK_STATUS_Y - 4, 320, 28, 0x0000);
+  if (state == 2) drawCentered("OFFLINE", CLK_STATUS_Y, 0x8410, 2);
+  else if (state == 1) drawCentered("MUTED", CLK_STATUS_Y, 0x8410, 2);
+  g_shown_status = state;
+  return true;
+}
+
+static void resetClockStamps() {
+  g_shown_min = -1;
+  g_shown_hour = -1;
+  g_shown_mday = -1;
+  g_shown_colon = -1;
+  g_shown_wstate = -1;
+  g_shown_status = -1;
+}
+
+// Idle face: local time and weather while no Cursor session is on screen.
+static void drawAmbient(bool full) {
+  if (!gfx) return;
+  AmbientClock clock;
+  ambientRead(clock);
+  if (full || !g_clock_face) {
+    fillScreen(0x0000);
+    g_clock_face = true;
+    resetClockStamps();
+  }
+  bool drew = paintClock(clock);
+  if (paintWeather(clock)) drew = true;
+  if (paintIdleStatus()) drew = true;
+  if (drew && disp) disp->flush();
+}
+
 static void drawHero() {
+  if (g_sessions.empty()) {
+    g_focus = BuddyState::Idle;
+    g_can_act = false;
+    drawAmbient(!g_clock_face);
+    return;
+  }
+  g_clock_face = false;
+
   BuddyState st = g_offline ? BuddyState::Offline : BuddyState::Idle;
   String project = "";
   String message = "Waiting for agents";
@@ -480,6 +766,7 @@ bool uiQuiesceForSleep() {
   if (releaseRgbPanel()) return true;
   st7701Init();
   digitalWrite(LCD_BL_PIN, HIGH);
+  g_clock_face = false;
   drawHero();
   return false;
 }
@@ -491,6 +778,7 @@ void uiRestoreAfterSleep() {
   st7701Init();
   startPanel();
   touchReset();
+  g_clock_face = false;
   drawHero();
   digitalWrite(LCD_BL_PIN, HIGH);
   syncInputs();
@@ -506,7 +794,7 @@ void uiLoop() {
       if (!g_offline && g_sessions.size() > 1 && y >= CHEV_Y && y < CHEV_Y + CHEV_H) {
         if (x >= CHEV_L_X && x < CHEV_L_X + CHEV_W) stepView(-1);
         else if (x >= CHEV_R_X && x < CHEV_R_X + CHEV_W) stepView(1);
-      } else if (y >= BTN_Y && y <= BTN_Y + BTN_H) {
+      } else if (!g_sessions.empty() && y >= BTN_Y && y <= BTN_Y + BTN_H) {
         if (x >= BTN_L_X && x <= BTN_L_X + BTN_W) {
           g_pending_action = g_can_act ? "cancel" : (g_muted ? "unmute" : "mute");
           g_pending_session = g_can_act ? g_view_id : "";
@@ -524,7 +812,14 @@ void uiLoop() {
 
   pollSwitches();
 
-  if (millis() - g_last_draw > 5000) {
+  if (g_sessions.empty()) {
+    static uint32_t lastClock = 0;
+    uint32_t now = millis();
+    if (now - lastClock >= 200) {
+      lastClock = now;
+      drawAmbient(false);
+    }
+  } else if (millis() - g_last_draw > 5000) {
     g_last_draw = millis();
     if (!g_offline) drawHero();
   }

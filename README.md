@@ -146,6 +146,8 @@ pio device monitor
 
 Touch: MUTE / UNMUTE and DISMISS send WebSocket `ack` messages back to the service.
 
+With no active sessions, and while the screen is awake, the puck shows the local time and the current weather. That lookup needs outbound internet. Location follows the public IP address unless `BUDDY_TZ`, `BUDDY_LATITUDE`, and `BUDDY_LONGITUDE` are set in `config.h` (see `config.h.example`).
+
 On battery, the display sleeps after 30 minutes with no touch or button press. Touch the screen or any of the four header buttons to wake it; Wi-Fi reconnects and the last view is drawn again. While USB is powering the board it stays awake. This board has no USB-present pin, so that decision follows the battery voltage on GPIO4: sleep runs only after the pack has been discharging. Alerts that arrive during sleep show up on the next wake.
 
 ## Tests
