@@ -35,6 +35,24 @@ static float readPackMv() {
   return (sum / 16.0f) * 3.0f;
 }
 
+static int g_bars = -1;
+
+static bool latestPackMv(float &mv) {
+  if (!g_count) return false;
+  int newest = (g_next + kHist - 1) % kHist;
+  mv = g_mv[newest];
+  return mv >= kMinPackMv && mv <= kMaxPackMv;
+}
+
+// Loaded single-cell LiPo. Each step is one quarter of the useful range.
+static int barsFromMv(float mv) {
+  if (mv >= 4050.f) return 4;
+  if (mv >= 3850.f) return 3;
+  if (mv >= 3650.f) return 2;
+  if (mv >= 3450.f) return 1;
+  return 0;
+}
+
 void powerBegin() {
   pinMode(BAT_ADC_PIN, INPUT);
   analogReadResolution(12);
@@ -73,6 +91,41 @@ bool powerIsDischarging() {
     }
   }
   return thenMv > 0.f && thenMv - nowMv >= kSlopeDropMv;
+}
+
+int powerBatteryBars() {
+  float mv;
+  if (!latestPackMv(mv)) {
+    g_bars = -1;
+    return -1;
+  }
+  int raw = barsFromMv(mv);
+  if (g_bars < 0 || raw >= g_bars) {
+    g_bars = raw;
+    return g_bars;
+  }
+  // Drop a segment only after the pack is 40 mV below that segment's floor.
+  float floor = 3450.f + (g_bars - 1) * 200.f;
+  if (mv <= floor - 40.f) g_bars = raw;
+  return g_bars;
+}
+
+bool powerIsCharging() {
+  float nowMv;
+  if (!latestPackMv(nowMv)) return false;
+  if (powerIsDischarging()) return false;
+
+  int newest = (g_next + kHist - 1) % kHist;
+  if (g_count >= 3) {
+    int prev = (newest + kHist - 2) % kHist;
+    uint32_t age = g_at[newest] - g_at[prev];
+    if (age >= 90UL * 1000UL && age <= 4UL * 60UL * 1000UL && nowMv - g_mv[prev] >= 20.f) return true;
+  }
+  // The charger holds a single cell at 4.2 V. A loaded pack does not sit there.
+  if (nowMv >= 4150.f) return true;
+  // Once the long window exists, a pack that is high and not falling is on USB.
+  if (g_count >= 10 && nowMv >= 4050.f) return true;
+  return false;
 }
 
 static bool wakePinsReleased() {

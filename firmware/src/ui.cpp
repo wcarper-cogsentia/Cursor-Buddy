@@ -16,6 +16,7 @@
 #include "settings.h"
 #include "exio.h"
 #include "st7701.h"
+#include "power.h"
 
 // Round 480×480: keep chrome inside the inscribed circle (r≈240).
 // Buttons sit on a chord well above the clipped bottom edge.
@@ -151,6 +152,8 @@ static bool g_shown_range = false;
 static char g_shown_unit = 0;
 static char g_shown_sum[24] = "";
 static int g_shown_status = -1;
+static int g_shown_bars = -2;
+static int g_shown_charge = -1;
 
 static int clockX() { return (PANEL_W - 5 * 6 * CLK_TIME_SIZE) / 2; }
 
@@ -375,6 +378,57 @@ static bool paintIdleStatus() {
   return true;
 }
 
+static void drawBatteryGauge(int bars, bool charging) {
+  const int bodyW = 92;
+  const int bodyH = 40;
+  const int nubW = 6;
+  const int nubH = 16;
+  const int x = (PANEL_W - (bodyW + nubW)) / 2;
+  const int y = 56;
+  const uint16_t frame = 0xC618;
+
+  gfx->fillRect(x - 4, y - 4, bodyW + nubW + 8, bodyH + 8, 0x0000);
+  gfx->fillRoundRect(x, y, bodyW, bodyH, 6, frame);
+  gfx->fillRoundRect(x + 3, y + 3, bodyW - 6, bodyH - 6, 4, 0x0000);
+  gfx->fillRoundRect(x + bodyW, y + (bodyH - nubH) / 2, nubW, nubH, 2, frame);
+
+  if (charging) {
+    drawBolt(x + (bodyW - 14) / 2, y + (bodyH - 26) / 2, 0xFFE0);
+    return;
+  }
+  if (bars <= 0) return;
+
+  // Left to right: the last remaining segment, then orange, yellow, and full.
+  static const uint16_t colors[4] = {0xF800, 0xFD20, 0xFFE0, 0x07E0};
+  const int pad = 6;
+  const int gap = 4;
+  const int segW = 17;
+  const int segH = bodyH - pad * 2;
+  int sx = x + pad;
+  for (int i = 0; i < bars && i < 4; i++) {
+    gfx->fillRoundRect(sx, y + pad, segW, segH, 2, colors[i]);
+    sx += segW + gap;
+  }
+}
+
+static bool paintBattery() {
+  int bars = powerBatteryBars();
+  bool charging = bars >= 0 && powerIsCharging();
+  int chargeFlag = charging ? 1 : 0;
+  if (bars == g_shown_bars && chargeFlag == g_shown_charge) return false;
+  if (bars < 0) {
+    bool wasDrawn = g_shown_bars >= 0;
+    if (wasDrawn) gfx->fillRect(160, 48, 160, 56, 0x0000);
+    g_shown_bars = -1;
+    g_shown_charge = 0;
+    return wasDrawn;
+  }
+  drawBatteryGauge(bars, charging);
+  g_shown_bars = bars;
+  g_shown_charge = chargeFlag;
+  return true;
+}
+
 static void resetClockStamps() {
   g_shown_min = -1;
   g_shown_hour = -1;
@@ -382,6 +436,8 @@ static void resetClockStamps() {
   g_shown_colon = -1;
   g_shown_wstate = -1;
   g_shown_status = -1;
+  g_shown_bars = -2;
+  g_shown_charge = -1;
 }
 
 static void drawSetupButton() {
@@ -410,6 +466,7 @@ static void drawAmbient(bool full) {
   bool drew = paintClock(clock);
   if (paintWeather(clock)) drew = true;
   if (paintIdleStatus()) drew = true;
+  if (paintBattery()) drew = true;
   if (cleared) {
     drawSetupButton();
     drew = true;
