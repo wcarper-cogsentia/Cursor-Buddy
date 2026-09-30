@@ -1,3 +1,4 @@
+<img width="1344" height="768" alt="featured_image" src="https://github.com/user-attachments/assets/8731b75a-c52e-4fee-878f-f93b4d73a4cf" />
 # Cursor Buddy v1
 
 Desktop **agent pager** for Cursor: a small service on macOS, Windows, or Linux watches agent lifecycle via **user-level Cursor hooks**, and a **Waveshare ESP32-S3-Touch-LCD-2.1** shows status over LAN Wi‑Fi (WebSocket), with buzzer + touch mute/dismiss.
